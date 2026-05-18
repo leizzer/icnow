@@ -10,7 +10,7 @@ OUT=${2:-output.png}
 DOT_FILE="temp_graph.dot"
 
 echo "digraph G {" > $DOT_FILE
-echo "  node [shape=record, style=filled, fillcolor=lightblue];" >> $DOT_FILE
+echo "  node [shape=box, style=filled, fillcolor=lightblue];" >> $DOT_FILE
 
 # Output nodes
 # We join nodes with node_labels and node_props_text to get a friendly display label.
@@ -19,12 +19,14 @@ sqlite3 "$DB" "
 SELECT 
   n.id || ' [label=\"' || 
   COALESCE(nl.label, 'Node') || '\\n' || 
-  'ID: ' || COALESCE(id_prop.value, n.id) || 
+  'ID: ' || COALESCE(MAX(CASE WHEN pk.key = 'id' THEN npt.value END), n.id) || 
+  COALESCE('\\n' || GROUP_CONCAT(CASE WHEN pk.key != 'id' THEN pk.key || ': ' || npt.value END, '\\n'), '') ||
   '\"];'
 FROM nodes n
 LEFT JOIN node_labels nl ON nl.node_id = n.id
-LEFT JOIN property_keys pk_id ON pk_id.key = 'id'
-LEFT JOIN node_props_text id_prop ON id_prop.node_id = n.id AND id_prop.key_id = pk_id.id;
+LEFT JOIN node_props_text npt ON npt.node_id = n.id
+LEFT JOIN property_keys pk ON pk.id = npt.key_id
+GROUP BY n.id, nl.label;
 " >> $DOT_FILE
 
 # Output edges

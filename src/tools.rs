@@ -16,11 +16,7 @@ impl GraphService {
     fn save_node(&self, Parameters(node): Parameters<Node>) -> Result<String, String> {
         let graph = Graph::open(&self.db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
         
-        graph.upsert_node(
-            &node.id.to_string(), 
-            &node.properties, 
-            &node.label
-        ).map_err(|e| format!("Failed to save node: {}", e))?;
+        node.save(&graph).map_err(|e| e.to_string())?;
         
         Ok(format!("Node {} saved successfully.", node.id))
     }
@@ -29,13 +25,21 @@ impl GraphService {
     fn save_edge(&self, Parameters(edge): Parameters<Edge>) -> Result<String, String> {
         let graph = Graph::open(&self.db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
         
-        graph.upsert_edge(
-            &edge.source.to_string(),
-            &edge.target.to_string(),
-            &edge.properties,
-            &edge.label
-        ).map_err(|e| format!("Failed to save edge: {}", e))?;
+        edge.save(&graph).map_err(|e| e.to_string())?;
         
         Ok(format!("Edge {} saved successfully.", edge.id))
     }
+
+    #[tool(description = "Parses a Rust file using tree-sitter and saves its structural nodes (functions, structs) to the graph")]
+    fn parse_project_file(&self, Parameters(req): Parameters<ParseFileRequest>) -> Result<String, String> {
+        let graph = Graph::open(&self.db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
+        crate::parser::parse_file(&req.file_path, &graph).map_err(|e| format!("Parse error: {}", e))?;
+        Ok(format!("Successfully parsed {} and added nodes to graph.", req.file_path))
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ParseFileRequest {
+    #[schemars(description = "The path to the Rust file to parse")]
+    pub file_path: String,
 }

@@ -1,10 +1,7 @@
 use anyhow::Result;
 use rmcp::{transport::stdio, ServiceExt};
+use icnow::tools::GraphService;
 use tracing_subscriber::{self, EnvFilter};
-
-pub mod models;
-mod tools;
-use tools::GraphService;
 
 #[tokio::main]
 async fn main() -> Result<()> {
