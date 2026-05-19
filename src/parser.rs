@@ -50,6 +50,13 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
 
     let mut file_props = HashMap::new();
     file_props.insert("name".to_string(), file_path.to_string());
+    if let Ok(metadata) = fs::metadata(file_path) {
+        if let Ok(modified) = metadata.modified() {
+            if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                file_props.insert("last_modified".to_string(), duration.as_secs().to_string());
+            }
+        }
+    }
     
     let file_node = crate::models::Node {
         id: file_path.to_string(),

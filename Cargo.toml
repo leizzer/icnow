@@ -20,3 +20,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tree-sitter = "0.26.8"
 tree-sitter-rust = "0.24.2"
 tree-sitter-ruby = "0.23.1"
+notify = "8.2.0"
