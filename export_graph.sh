@@ -20,7 +20,7 @@ SELECT
   n.id || ' [label=\"' || 
   COALESCE(nl.label, 'Node') || '\\n' || 
   'ID: ' || COALESCE(MAX(CASE WHEN pk.key = 'id' THEN npt.value END), n.id) || 
-  COALESCE('\\n' || GROUP_CONCAT(CASE WHEN pk.key != 'id' THEN pk.key || ': ' || npt.value END, '\\n'), '') ||
+  COALESCE('\\n' || GROUP_CONCAT(CASE WHEN pk.key != 'id' AND pk.key != 'source_code' THEN pk.key || ': ' || npt.value END, '\\n'), '') ||
   '\"];'
 FROM nodes n
 LEFT JOIN node_labels nl ON nl.node_id = n.id

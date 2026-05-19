@@ -51,7 +51,7 @@ proc.stdin.flush()
 print("\n=> Sent 'notifications/initialized'")
 
 # 3. Call Tool
-print("\n=> Calling 'parse_project_file' tool for src/tools.rs")
+print("\n=> Calling 'parse_project_file' tool for webhooks_controller.rb")
 parse_req = {
     "jsonrpc": "2.0",
     "id": 2,
@@ -59,7 +59,7 @@ parse_req = {
     "params": {
         "name": "parse_project_file",
         "arguments": {
-            "file_path": "src/tools.rs"
+            "file_path": "/Users/cristian/Projects/dgapp_bkp/app/controllers/api/v2/webhooks_controller.rb"
         }
     }
 }
@@ -82,6 +82,43 @@ query_req = {
     }
 }
 proc.stdin.write((json.dumps(query_req) + "\n").encode('utf-8'))
+proc.stdin.flush()
+
+response = proc.stdout.readline()
+print("<= Response:", json.dumps(json.loads(response), indent=2))
+
+print("\n=> Calling 'traverse_graph' tool for webhooks_controller.rb starting node")
+traverse_req = {
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "tools/call",
+    "params": {
+        "name": "traverse_graph",
+        "arguments": {
+            "node_id": "/Users/cristian/Projects/dgapp_bkp/app/controllers/api/v2/webhooks_controller.rb",
+            "max_depth": 3
+        }
+    }
+}
+proc.stdin.write((json.dumps(traverse_req) + "\n").encode('utf-8'))
+proc.stdin.flush()
+
+response = proc.stdout.readline()
+print("<= Response:", json.dumps(json.loads(response), indent=2))
+
+print("\n=> Calling 'query_graph_cypher' tool with a native Cypher MATCH query")
+cypher_req = {
+    "jsonrpc": "2.0",
+    "id": 5,
+    "method": "tools/call",
+    "params": {
+        "name": "query_graph_cypher",
+        "arguments": {
+            "query": "MATCH (c:Class)-[:HAS_METHOD]->(m:Method) RETURN c.id, m.id LIMIT 3"
+        }
+    }
+}
+proc.stdin.write((json.dumps(cypher_req) + "\n").encode('utf-8'))
 proc.stdin.flush()
 
 response = proc.stdout.readline()
