@@ -33,6 +33,24 @@ fn get_ruby_namespace(node: tree_sitter::Node, source_code: &[u8]) -> Result<Str
     Ok(parts.join("::"))
 }
 
+fn get_ts_namespace(node: tree_sitter::Node, source_code: &[u8]) -> Result<String> {
+    let mut parts = Vec::new();
+    let mut curr = Some(node);
+    while let Some(n) = curr {
+        let kind = n.kind();
+        if kind == "class_declaration" || kind == "interface_declaration" || kind == "internal_module" {
+            if let Some(name_node) = n.child_by_field_name("name") {
+                if let Ok(text) = name_node.utf8_text(source_code) {
+                    parts.push(text.to_string());
+                }
+            }
+        }
+        curr = n.parent();
+    }
+    parts.reverse();
+    Ok(parts.join("::"))
+}
+
 pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
     let source_code = fs::read_to_string(file_path)?;
     let mut parser = Parser::new();
@@ -50,6 +68,20 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
             (class name: _ @name) @struct.node
             (module name: _ @name) @struct.node
             (call method: (identifier) @import.method arguments: (argument_list (string (string_content) @name))) @import.node
+        "#)
+    } else if file_path.ends_with(".ts") || file_path.ends_with(".tsx") {
+        let lang = if file_path.ends_with(".tsx") {
+            tree_sitter_typescript::LANGUAGE_TSX.into()
+        } else {
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
+        };
+        (lang, r#"
+            (function_declaration name: (identifier) @name) @function.node
+            (method_definition name: (property_identifier) @name) @function.node
+            (class_declaration name: (type_identifier) @name) @struct.node
+            (interface_declaration name: (type_identifier) @name) @struct.node
+            (internal_module name: (identifier) @name) @struct.node
+            (import_statement source: (string (string_fragment) @name)) @import.node
         "#)
     } else {
         return Err(anyhow::anyhow!("Unsupported file extension: {}", file_path));
@@ -107,9 +139,9 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
                 .unwrap_or("")
                 .to_string();
             
+            kind = func_node.kind().to_string();
             if file_path.ends_with(".rs") {
                 label = "Function".to_string();
-                kind = func_node.kind().to_string();
                 // Check if it's inside an impl block
                 if let Some(dl) = func_node.parent() {
                     if dl.kind() == "declaration_list" {
@@ -124,9 +156,8 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
                         }
                     }
                 }
-            } else {
+            } else if file_path.ends_with(".rb") {
                 label = "Method".to_string();
-                kind = func_node.kind().to_string();
                 let ns = get_ruby_namespace(func_node, source_code.as_bytes())?;
                 let method_name = func_node.child_by_field_name("name")
                     .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
@@ -135,6 +166,17 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
                     method_name.to_string()
                 } else {
                     format!("{}::{}", ns, method_name)
+                };
+            } else {
+                label = if kind == "method_definition" { "Method".to_string() } else { "Function".to_string() };
+                let ns = get_ts_namespace(func_node, source_code.as_bytes())?;
+                let func_name = func_node.child_by_field_name("name")
+                    .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
+                    .unwrap_or("");
+                name = if ns.is_empty() {
+                    func_name.to_string()
+                } else {
+                    format!("{}::{}", ns, func_name)
                 };
             }
             node_name = name;
@@ -149,8 +191,13 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
             if file_path.ends_with(".rb") {
                 label = if kind == "class" { "Class".to_string() } else { "Module".to_string() };
                 name = get_ruby_namespace(struct_node, source_code.as_bytes())?;
-            } else {
+            } else if file_path.ends_with(".rs") {
                 label = "Struct".to_string();
+            } else {
+                label = if kind == "class_declaration" { "Class".to_string() }
+                        else if kind == "interface_declaration" { "Interface".to_string() }
+                        else { "Module".to_string() }; // internal_module
+                name = get_ts_namespace(struct_node, source_code.as_bytes())?;
             }
             node_name = name;
             node_code = struct_node.utf8_text(source_code.as_bytes())?.to_string();
@@ -159,7 +206,7 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
             label = "Import".to_string();
             if file_path.ends_with(".rs") {
                 node_name = import_node.utf8_text(source_code.as_bytes())?.to_string();
-            } else {
+            } else if file_path.ends_with(".rb") {
                 let mut is_valid_import = true;
                 if let Some(&method_node) = capture_map.get("import.method") {
                     let method_name = method_node.utf8_text(source_code.as_bytes())?.to_string();
@@ -175,6 +222,11 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
                 } else {
                     label.clear();
                 }
+            } else {
+                node_name = capture_map.get("name")
+                    .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
+                    .unwrap_or("")
+                    .to_string();
             }
             node_code = import_node.utf8_text(source_code.as_bytes())?.to_string();
         }
@@ -202,7 +254,7 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
             // Populate the FileSummary
             if label == "Import" {
                 summary.imports.push(node_name.clone());
-            } else if label == "Class" || label == "Module" || label == "Struct" {
+            } else if label == "Class" || label == "Module" || label == "Struct" || label == "Interface" {
                 summary.structures.entry(label.clone()).or_insert_with(Vec::new).push(node_name.clone());
             } else if label == "Method" || label == "Function" {
                 if let Some((struct_part, method_part)) = node_name.rsplit_once("::") {

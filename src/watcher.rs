@@ -18,7 +18,7 @@ fn scan_directory(dir: &Path, files: &mut Vec<PathBuf>) {
                 scan_directory(&path, files);
             } else if path.is_file() {
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if ext == "rs" || ext == "rb" {
+                    if ext == "rs" || ext == "rb" || ext == "ts" || ext == "tsx" {
                         files.push(path);
                     }
                 }
@@ -113,7 +113,7 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
 fn handle_watcher_event(event: Event, conn: &Connection, graph: &Graph) {
     for path in event.paths {
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if ext != "rs" && ext != "rb" {
+            if ext != "rs" && ext != "rb" && ext != "ts" && ext != "tsx" {
                 continue;
             }
         } else {
