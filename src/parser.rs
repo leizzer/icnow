@@ -4,7 +4,16 @@ use std::collections::HashMap;
 use std::fs;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
-pub fn parse_file(file_path: &str, graph: &Graph) -> Result<()> {
+#[derive(Debug, Default)]
+pub struct FileSummary {
+    pub file_path: String,
+    pub imports: Vec<String>,
+    pub structs: Vec<String>,
+    pub functions: Vec<String>,
+    pub methods: HashMap<String, Vec<String>>,
+}
+
+pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
     let source_code = fs::read_to_string(file_path)?;
     let mut parser = Parser::new();
     let language = tree_sitter_rust::LANGUAGE.into();
@@ -37,10 +46,16 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<()> {
     };
     file_node.save(graph)?;
 
+    let mut summary = FileSummary {
+        file_path: file_path.to_string(),
+        ..Default::default()
+    };
+
     while let Some(m) = matches.next() {
         let mut node_name = String::new();
         let mut kind = String::new();
         let mut label = String::new();
+        let mut node_code = String::new();
 
         // Iterate through the captures in this match
         for capture in m.captures {
@@ -68,13 +83,16 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<()> {
             } else if *capture_name == "function.node" {
                 kind = "function_item".to_string();
                 label = "Function".to_string();
+                node_code = capture.node.utf8_text(source_code.as_bytes())?.to_string();
             } else if *capture_name == "struct.node" {
                 kind = "struct_item".to_string();
                 label = "Struct".to_string();
+                node_code = capture.node.utf8_text(source_code.as_bytes())?.to_string();
             } else if *capture_name == "import.node" {
                 kind = "use_declaration".to_string();
                 label = "Import".to_string();
                 node_name = capture.node.utf8_text(source_code.as_bytes())?.to_string();
+                node_code = node_name.clone();
             }
         }
 
@@ -83,16 +101,35 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<()> {
             props.insert("name".to_string(), node_name.clone());
             props.insert("file".to_string(), file_path.to_string());
             
+            if !node_code.is_empty() {
+                props.insert("source_code".to_string(), node_code);
+            }
+            
             let id = format!("{}::{}", file_path, node_name);
             
             let node = crate::models::Node {
                 id: id.clone(),
-                label,
-                kind,
+                label: label.clone(),
+                kind: kind.clone(),
                 properties: props,
             };
             
             node.save(graph)?;
+
+            // Populate the FileSummary
+            if label == "Function" {
+                if let Some((struct_part, method_part)) = node_name.split_once("::") {
+                    summary.methods.entry(struct_part.to_string())
+                        .or_insert_with(Vec::new)
+                        .push(method_part.to_string());
+                } else {
+                    summary.functions.push(node_name.clone());
+                }
+            } else if label == "Struct" {
+                summary.structs.push(node_name.clone());
+            } else if label == "Import" {
+                summary.imports.push(node_name.clone());
+            }
 
             // Create structural edge between File and Content Node
             let edge = crate::models::Edge {
@@ -121,5 +158,5 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(summary)
 }

@@ -51,19 +51,41 @@ proc.stdin.flush()
 print("\n=> Sent 'notifications/initialized'")
 
 # 3. Call Tool
-tool_req = {
+print("\n=> Calling 'parse_project_file' tool for src/tools.rs")
+parse_req = {
     "jsonrpc": "2.0",
     "id": 2,
     "method": "tools/call",
     "params": {
         "name": "parse_project_file",
         "arguments": {
-            "file_path": "src/models.rs"
+            "file_path": "src/tools.rs"
         }
     }
 }
-print("\n=> Calling 'parse_project_file' tool for src/models.rs")
-print("<= Response:", json.dumps(send_req(proc, tool_req), indent=2))
+proc.stdin.write((json.dumps(parse_req) + "\n").encode('utf-8'))
+proc.stdin.flush()
+
+response = proc.stdout.readline()
+print("<= Response:", json.dumps(json.loads(response), indent=2))
+
+print("\n=> Calling 'query_graph' tool to extract source code for Edge::save")
+query_req = {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+        "name": "query_graph",
+        "arguments": {
+            "query": "SELECT s.value as source_code FROM nodes n JOIN node_props_text s ON n.id = s.node_id AND s.key_id = (SELECT id FROM property_keys WHERE key='source_code') JOIN node_props_text id_prop ON n.id = id_prop.node_id AND id_prop.key_id = (SELECT id FROM property_keys WHERE key='id') WHERE id_prop.value = 'src/models.rs::Edge::save';"
+        }
+    }
+}
+proc.stdin.write((json.dumps(query_req) + "\n").encode('utf-8'))
+proc.stdin.flush()
+
+response = proc.stdout.readline()
+print("<= Response:", json.dumps(json.loads(response), indent=2))
 
 # Cleanup
 proc.terminate()
