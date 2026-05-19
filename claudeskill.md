@@ -6,10 +6,10 @@ Add these guidelines to your custom developer instructions or system prompt when
 
 ## 🎯 Primary Directive
 > [!IMPORTANT]
-> **PRIORITIZE ICNOW**: You must always attempt to use the `icnow` MCP server tools first to search, read, explore, or navigate files ending in `.rs` (Rust) or `.rb` (Ruby).
+> **PRIORITIZE ICNOW**: You must always attempt to use the `icnow` MCP server tools first to search, read, explore, or navigate files ending in `.rs` (Rust), `.rb` (Ruby), `.ts` (TypeScript), or `.tsx` (TSX).
 > 
-> **SHELL FALLBACK RULE**: You are **ONLY** permitted to fall back to raw shell commands (`cat`, `rg`, `grep`, `find`, `sed`) if the response returned by `icnow` is unsatisfactory or fails to resolve your query (e.g., if a file is not yet indexed, a parsing error occurs, or macro-generated methods are missed by the AST parser). 
-> Before running any fallback shell command, you **MUST** explicitly state in your response *why* the `icnow` tool did not satisfy your search requirement. Once declared, you may use standard shell commands to complete the task.
+> **TRADITIONAL LOOKUP FALLBACK**: You are **ONLY** permitted to fall back to traditional lookup tools (like `view_file` or raw shell commands such as `cat`, `rg`, `grep`, `find`, `sed`) to search or read files if the response returned by `icnow` is unsatisfactory or insufficient to accomplish the given task.
+> Before executing any fallback lookup, you **MUST** explicitly state in your response *why* the `icnow` tool did not satisfy your query or was insufficient. Once explained, you may complete the task using traditional lookup tools.
 
 ---
 
