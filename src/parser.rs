@@ -16,6 +16,23 @@ pub struct FileSummary {
     pub methods: HashMap<String, Vec<(String, String)>>,
 }
 
+fn get_ruby_namespace(node: tree_sitter::Node, source_code: &[u8]) -> Result<String> {
+    let mut parts = Vec::new();
+    let mut curr = Some(node);
+    while let Some(n) = curr {
+        if n.kind() == "class" || n.kind() == "module" {
+            if let Some(name_node) = n.child_by_field_name("name") {
+                if let Ok(text) = name_node.utf8_text(source_code) {
+                    parts.push(text.to_string());
+                }
+            }
+        }
+        curr = n.parent();
+    }
+    parts.reverse();
+    Ok(parts.join("::"))
+}
+
 pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
     let source_code = fs::read_to_string(file_path)?;
     let mut parser = Parser::new();
@@ -29,8 +46,9 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
     } else if file_path.ends_with(".rb") {
         (tree_sitter_ruby::LANGUAGE.into(), r#"
             (method name: (identifier) @name) @function.node
-            (class name: (constant) @name) @struct.node
-            (module name: (constant) @name) @struct.node
+            (singleton_method name: (identifier) @name) @function.node
+            (class name: _ @name) @struct.node
+            (module name: _ @name) @struct.node
             (call method: (identifier) @import.method arguments: (argument_list (string (string_content) @name))) @import.node
         "#)
     } else {
@@ -72,80 +90,93 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
     };
 
     while let Some(m) = matches.next() {
+        let mut capture_map = HashMap::new();
+        for capture in m.captures {
+            let name: &str = &query.capture_names()[capture.index as usize];
+            capture_map.insert(name, capture.node);
+        }
+
         let mut node_name = String::new();
         let mut kind = String::new();
         let mut label = String::new();
         let mut node_code = String::new();
-        let mut is_valid_import = true;
 
-        // Iterate through the captures in this match
-        for capture in m.captures {
-            let capture_name = &query.capture_names()[capture.index as usize];
+        if let Some(&func_node) = capture_map.get("function.node") {
+            let mut name = capture_map.get("name")
+                .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
+                .unwrap_or("")
+                .to_string();
             
-            if *capture_name == "name" {
-                node_name = capture.node.utf8_text(source_code.as_bytes())?.to_string();
-                
-                // Traversal: if this is a function, check if it's inside an impl block
-                if file_path.ends_with(".rs") {
-                    if capture.node.parent().map(|p| p.kind()) == Some("function_item") {
-                        let func_node = capture.node.parent().unwrap();
-                        if let Some(dl) = func_node.parent() {
-                            if dl.kind() == "declaration_list" {
-                                if let Some(impl_item) = dl.parent() {
-                                    if impl_item.kind() == "impl_item" {
-                                        if let Some(type_node) = impl_item.child_by_field_name("type") {
-                                            let struct_name = type_node.utf8_text(source_code.as_bytes())?.to_string();
-                                            node_name = format!("{}::{}", struct_name, node_name);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if file_path.ends_with(".rb") {
-                    if capture.node.parent().map(|p| p.kind()) == Some("method") {
-                        let func_node = capture.node.parent().unwrap();
-                        if let Some(bs) = func_node.parent() {
-                            if bs.kind() == "body_statement" {
-                                if let Some(class_item) = bs.parent() {
-                                    if class_item.kind() == "class" || class_item.kind() == "module" {
-                                        if let Some(name_node) = class_item.child_by_field_name("name") {
-                                            let struct_name = name_node.utf8_text(source_code.as_bytes())?.to_string();
-                                            node_name = format!("{}::{}", struct_name, node_name);
-                                        }
+            if file_path.ends_with(".rs") {
+                label = "Function".to_string();
+                kind = func_node.kind().to_string();
+                // Check if it's inside an impl block
+                if let Some(dl) = func_node.parent() {
+                    if dl.kind() == "declaration_list" {
+                        if let Some(impl_item) = dl.parent() {
+                            if impl_item.kind() == "impl_item" {
+                                if let Some(type_node) = impl_item.child_by_field_name("type") {
+                                    if let Ok(struct_name) = type_node.utf8_text(source_code.as_bytes()) {
+                                        name = format!("{}::{}", struct_name, name);
                                     }
                                 }
                             }
                         }
                     }
                 }
-            } else if *capture_name == "function.node" {
-                kind = capture.node.kind().to_string();
-                label = if file_path.ends_with(".rb") { "Method".to_string() } else { "Function".to_string() };
-                node_code = capture.node.utf8_text(source_code.as_bytes())?.to_string();
-            } else if *capture_name == "struct.node" {
-                kind = capture.node.kind().to_string();
-                label = if kind == "class" { "Class".to_string() } 
-                        else if kind == "module" { "Module".to_string() } 
-                        else { "Struct".to_string() };
-                node_code = capture.node.utf8_text(source_code.as_bytes())?.to_string();
-            } else if *capture_name == "import.node" {
-                kind = "use_declaration".to_string();
-                label = "Import".to_string();
-                if file_path.ends_with(".rs") {
-                    node_name = capture.node.utf8_text(source_code.as_bytes())?.to_string();
+            } else {
+                label = "Method".to_string();
+                kind = func_node.kind().to_string();
+                let ns = get_ruby_namespace(func_node, source_code.as_bytes())?;
+                let method_name = func_node.child_by_field_name("name")
+                    .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
+                    .unwrap_or("");
+                name = if ns.is_empty() {
+                    method_name.to_string()
+                } else {
+                    format!("{}::{}", ns, method_name)
+                };
+            }
+            node_name = name;
+            node_code = func_node.utf8_text(source_code.as_bytes())?.to_string();
+        } else if let Some(&struct_node) = capture_map.get("struct.node") {
+            let mut name = capture_map.get("name")
+                .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
+                .unwrap_or("")
+                .to_string();
+            
+            kind = struct_node.kind().to_string();
+            if file_path.ends_with(".rb") {
+                label = if kind == "class" { "Class".to_string() } else { "Module".to_string() };
+                name = get_ruby_namespace(struct_node, source_code.as_bytes())?;
+            } else {
+                label = "Struct".to_string();
+            }
+            node_name = name;
+            node_code = struct_node.utf8_text(source_code.as_bytes())?.to_string();
+        } else if let Some(&import_node) = capture_map.get("import.node") {
+            kind = "use_declaration".to_string();
+            label = "Import".to_string();
+            if file_path.ends_with(".rs") {
+                node_name = import_node.utf8_text(source_code.as_bytes())?.to_string();
+            } else {
+                let mut is_valid_import = true;
+                if let Some(&method_node) = capture_map.get("import.method") {
+                    let method_name = method_node.utf8_text(source_code.as_bytes())?.to_string();
+                    if method_name != "require" && method_name != "include" {
+                        is_valid_import = false;
+                    }
                 }
-                node_code = capture.node.utf8_text(source_code.as_bytes())?.to_string();
-            } else if *capture_name == "import.method" {
-                let method_name = capture.node.utf8_text(source_code.as_bytes())?.to_string();
-                if method_name != "require" && method_name != "include" {
-                    is_valid_import = false;
+                if is_valid_import {
+                    node_name = capture_map.get("name")
+                        .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
+                        .unwrap_or("")
+                        .to_string();
+                } else {
+                    label.clear();
                 }
             }
-        }
-        
-        if label == "Import" && !is_valid_import {
-            label.clear();
+            node_code = import_node.utf8_text(source_code.as_bytes())?.to_string();
         }
 
         if !node_name.is_empty() && !label.is_empty() {
@@ -174,7 +205,7 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
             } else if label == "Class" || label == "Module" || label == "Struct" {
                 summary.structures.entry(label.clone()).or_insert_with(Vec::new).push(node_name.clone());
             } else if label == "Method" || label == "Function" {
-                if let Some((struct_part, method_part)) = node_name.split_once("::") {
+                if let Some((struct_part, method_part)) = node_name.rsplit_once("::") {
                     summary.methods.entry(struct_part.to_string())
                         .or_insert_with(Vec::new)
                         .push((label.clone(), method_part.to_string()));
@@ -195,7 +226,7 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
 
             // If it's a Function/Method and its name contains "::", it's an impl method, so link it to its Struct!
             if label == "Function" || label == "Method" {
-                if let Some((struct_part, _method_part)) = node_name.split_once("::") {
+                if let Some((struct_part, _method_part)) = node_name.rsplit_once("::") {
                     let struct_id = format!("{}::{}", file_path, struct_part);
                     let method_edge = crate::models::Edge {
                         id: format!("{}::HAS_METHOD::{}", struct_id, id),
