@@ -55,3 +55,24 @@ Nodes represent files, functions, classes, models, or imports.
 Edges represent the relationships between two nodes.
 - **`source` / `target`**: These **MUST** be the exact String `id`s of the Nodes you are connecting (e.g., source: `src/main.rs::main`, target: `src/models.rs::Node`).
 - **`label`**: The relationship type (e.g., `CALLS`, `IMPORTS`, `REFERENCES`, `BELONGS_TO`).
+
+## MCP Tool Guidance & Best Practices
+
+There are three ways to provide guidance to LLM agents on when and how to use `icnow`'s MCP tools:
+
+### 1. Host-Level System Instructions (`instructions.md`)
+For advanced MCP clients (such as Antigravity/Gemini), you can place an `instructions.md` file in the MCP server configuration directory:
+- **Path:** `/Users/cristian/.gemini/antigravity/mcp/icnow/instructions.md`
+- **Behavior:** When the host application registers `icnow`, it automatically reads this file and appends its contents directly to the LLM's system prompt. Use this file to document complex multi-tool workflows and domain-specific rules.
+
+### 2. Protocol-Level Metadata (MCP Specification)
+The Model Context Protocol supports two native mechanisms within the server implementation:
+- **Tool JSON Schema Descriptions:** Every tool and parameter schema contains a `description` field. The LLM uses these fields to determine the utility, arguments, and return expectations of each tool.
+- **Prompts API (`prompts/list`, `prompts/get`):** The server can expose predefined templates (workflows, debugging templates, etc.) that the user can trigger to feed the LLM structured instructions on orchestrating the tools.
+
+### 3. Project-Level Agent Rules (Workspace Configurations)
+You can define rules directly inside the repository workspace root using:
+- `.clauderules` (For Claude Desktop / CLI)
+- `.geminirules` / `.cursorrules` (For Gemini, Antigravity, and Cursor)
+
+These files are read on session initialization to enforce rules such as checking `icnow` first before falling back to traditional file reading (`view_file`, `cat`, or `grep`).
