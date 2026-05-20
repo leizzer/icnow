@@ -13,7 +13,7 @@ pub struct GraphService {
 
 #[tool_router(server_handler)]
 impl GraphService {
-    #[tool(description = "Saves a node into the graphqlite graph database")]
+    #[tool(description = "Saves a new node (file, function, class, module, etc.) into the graph. Use this tool manually only if the static parser missed a specific node or when explicitly registering domain-level concepts like Rails Controllers/Models and their fields.")]
     fn save_node(&self, Parameters(node): Parameters<Node>) -> Result<String, String> {
         let graph = Graph::open(&self.db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
         
@@ -22,7 +22,7 @@ impl GraphService {
         Ok(format!("Node {} saved successfully.", node.id))
     }
 
-    #[tool(description = "Saves an edge between two nodes into the graphqlite graph database")]
+    #[tool(description = "Creates or updates a directed edge between two existing nodes (e.g. connecting a caller function to a callee method, or mapping database entity relationships). Use this tool to explicitly link imports to their physical file targets, functions to their internal calls, or class inheritance/mixins.")]
     fn save_edge(&self, Parameters(edge): Parameters<Edge>) -> Result<String, String> {
         let graph = Graph::open(&self.db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
         
@@ -31,7 +31,7 @@ impl GraphService {
         Ok(format!("Edge {} saved successfully.", edge.id))
     }
 
-    #[tool(description = "Parses a Rust file using tree-sitter and saves its structural nodes (functions, structs) to the graph")]
+    #[tool(description = "Parses a source file (Rust, Ruby, TypeScript, TSX) using Tree-sitter, extracts all structural nodes (Functions, Methods, Classes, Interfaces, Imports), and automatically adds them and their container relationships to the graph database. Call this tool first to map out the architecture of a new or modified file.")]
     fn parse_project_file(&self, Parameters(req): Parameters<ParseFileRequest>) -> Result<String, String> {
         let graph = Graph::open(&self.db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
         let summary = crate::parser::parse_file(&req.file_path, &graph).map_err(|e| format!("Parse error: {}", e))?;
@@ -72,7 +72,7 @@ impl GraphService {
         Ok(out)
     }
 
-    #[tool(description = "Executes an arbitrary SQLite query against the graph database and returns the results in a formatted Markdown table")]
+    #[tool(description = "Executes a raw SQL SELECT query against the underlying SQLite database tables (nodes, edges, node_props_text) to retrieve metadata, properties, or precise source code fragments. Use this tool when you need to extract the 'source_code' property of a specific function or class node by its ID.")]
     fn query_graph(&self, Parameters(req): Parameters<QueryGraphRequest>) -> Result<String, String> {
         let output = std::process::Command::new("sqlite3")
             .arg(&self.db_path)
@@ -90,7 +90,7 @@ impl GraphService {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
-    #[tool(description = "Recursively traverses the graph from a starting node up to N hops, returning all connected nodes and edges")]
+    #[tool(description = "Recursively walks the graph bidirectionally from a starting node up to a specified depth (max_depth) and returns an indented relationship list. Use this tool when you want to discover the neighborhood of dependencies, callers, or subclasses of a particular node in a single call.")]
     fn traverse_graph(&self, Parameters(req): Parameters<TraverseGraphRequest>) -> Result<String, String> {
         let depth = req.max_depth.unwrap_or(2);
         
@@ -139,7 +139,7 @@ impl GraphService {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
-    #[tool(description = "Executes an arbitrary Cypher query against the graph database using the graphqlite package and returns the results in a formatted Markdown table")]
+    #[tool(description = "Executes a graph query using Cypher syntax (e.g., MATCH (source)-[rel]->(target) WHERE ...) to discover patterns, links, or cross-file dependencies. This is the preferred tool for high-level semantic lookups and pattern matching in the database.")]
     fn query_graph_cypher(&self, Parameters(req): Parameters<QueryGraphCypherRequest>) -> Result<String, String> {
         let conn = graphqlite::Connection::open(&self.db_path)
             .map_err(|e| format!("Failed to open graph database: {}", e))?;
@@ -180,26 +180,26 @@ impl GraphService {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ParseFileRequest {
-    #[schemars(description = "The path to the Rust file to parse")]
+    #[schemars(description = "The absolute or relative path to the Rust (.rs), Ruby (.rb), TypeScript (.ts), or TSX (.tsx) file to parse.")]
     pub file_path: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct QueryGraphRequest {
-    #[schemars(description = "The SQLite query to execute against knowledge.db")]
+    #[schemars(description = "The raw SQL SELECT query to execute against the knowledge.db database (e.g. querying nodes, edges, or node_props_text directly).")]
     pub query: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TraverseGraphRequest {
-    #[schemars(description = "The starting node ID (e.g. 'src/models.rs::Node')")]
+    #[schemars(description = "The globally unique string ID of the starting node (e.g. 'src/models.rs::Node').")]
     pub node_id: String,
-    #[schemars(description = "Max depth to recursively traverse. Defaults to 2.")]
+    #[schemars(description = "Maximum depth of recursive hops to traverse. Defaults to 2.")]
     pub max_depth: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct QueryGraphCypherRequest {
-    #[schemars(description = "The Cypher query to execute (e.g. 'MATCH (c:Class)-[:HAS_METHOD]->(m) RETURN c.id, m.id LIMIT 5')")]
+    #[schemars(description = "The Cypher query string to execute. Example: 'MATCH (c:Class)-[:HAS_METHOD]->(m) RETURN c.id, m.id LIMIT 10'")]
     pub query: String,
 }

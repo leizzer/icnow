@@ -4,13 +4,13 @@ use schemars::JsonSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Node {
-    #[schemars(description = "A globally unique identifier. Use the format 'path/to/file.rs::function_name' or 'path/to/file.rs'")]
+    #[schemars(description = "A globally unique identifier. For structural elements, use the format 'path/to/file.ext::ClassName::method_name' or 'path/to/file.ext::function_name'. For files, use the file path itself.")]
     pub id: String,
-    #[schemars(description = "The type of node, e.g., 'Function', 'Struct', 'File', 'Model'")]
+    #[schemars(description = "The high-level category of the node, e.g., 'File', 'Class', 'Module', 'Struct', 'Interface', 'Function', 'Method', 'Import'")]
     pub label: String, 
-    #[schemars(description = "The specific syntax or domain kind, e.g., 'function_item', 'Controller'")]
+    #[schemars(description = "The specific AST syntax kind or code element, e.g., 'function_declaration', 'class_declaration', 'method_definition'")]
     pub kind: String, 
-    #[schemars(description = "Key-value properties to store on the node (e.g., 'name', 'file', value examples)")]
+    #[schemars(description = "A key-value map for arbitrary node metadata, such as 'name', 'file', 'source_code', or 'last_modified'")]
     pub properties: HashMap<String, String>,
 }
 
@@ -26,15 +26,15 @@ impl Node {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Edge {
-    #[schemars(description = "A globally unique identifier for this specific edge")]
+    #[schemars(description = "A globally unique identifier for this specific relationship edge, e.g., 'source_id::RELATION_NAME::target_id'")]
     pub id: String,
-    #[schemars(description = "The string ID of the source node (e.g., 'src/main.rs::main')")]
+    #[schemars(description = "The globally unique string ID of the source node")]
     pub source: String,
-    #[schemars(description = "The string ID of the target node (e.g., 'src/models.rs::Node')")]
+    #[schemars(description = "The globally unique string ID of the target node")]
     pub target: String,
-    #[schemars(description = "The relationship type, e.g., 'CALLS', 'IMPORTS', 'REFERENCES'")]
+    #[schemars(description = "The relationship label, e.g., 'CONTAINS' (file contains element), 'HAS_METHOD', 'CALLS' (method calls method), 'IMPORTS'")]
     pub label: String,
-    #[schemars(description = "Any additional properties to store on the edge")]
+    #[schemars(description = "Additional properties to store on the edge (e.g., call line number, import aliases)")]
     pub properties: HashMap<String, String>,
 }
 
