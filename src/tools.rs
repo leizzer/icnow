@@ -176,6 +176,40 @@ impl GraphService {
         
         Ok(out)
     }
+
+    #[tool(description = "Searches the graph for nodes matching a symbol name or pattern (e.g., a class, function, or file name). Use this tool to instantly find where a symbol is defined across the entire workspace without knowing its file path.")]
+    fn search_symbols(&self, Parameters(req): Parameters<SearchSymbolsRequest>) -> Result<String, String> {
+        let limit = req.limit.unwrap_or(50);
+        let safe_query = req.query.replace("'", "''");
+        
+        let sql = format!(
+            "SELECT np_id.value AS id, nl.label \
+             FROM nodes n \
+             JOIN node_props_text np_id ON n.id = np_id.node_id \
+             JOIN property_keys pk_id ON np_id.key_id = pk_id.id AND pk_id.key = 'id' \
+             LEFT JOIN node_labels nl ON n.id = nl.node_id \
+             WHERE np_id.value LIKE '%{}%' \
+             LIMIT {};",
+            safe_query, limit
+        );
+        
+        let output = std::process::Command::new("sqlite3")
+            .arg("-cmd")
+            .arg(".timeout 5000")
+            .arg(&self.db_path)
+            .arg("-header")
+            .arg("-markdown")
+            .arg(&sql)
+            .output()
+            .map_err(|e| format!("Failed to execute query: {}", e))?;
+            
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Query failed: {}", err));
+        }
+        
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -202,4 +236,12 @@ pub struct TraverseGraphRequest {
 pub struct QueryGraphCypherRequest {
     #[schemars(description = "The Cypher query string to execute. Example: 'MATCH (c:Class)-[:HAS_METHOD]->(m) RETURN c.id, m.id LIMIT 10'")]
     pub query: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SearchSymbolsRequest {
+    #[schemars(description = "The symbol name or pattern to search for (e.g., 'UserController', 'main', 'save_node').")]
+    pub query: String,
+    #[schemars(description = "Optional limit on the number of results. Defaults to 50.")]
+    pub limit: Option<u32>,
 }
