@@ -2,9 +2,48 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::time::UNIX_EPOCH;
 use std::sync::mpsc::channel;
+use std::sync::{LazyLock, Mutex};
+use std::collections::HashSet;
 use anyhow::Result;
 use graphqlite::{Connection, Graph};
 use notify::{Watcher, RecommendedWatcher, RecursiveMode, Event};
+
+static WATCHED_WORKSPACES: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| {
+    Mutex::new(HashSet::new())
+});
+
+pub fn ensure_watching(project_root: &Path, db_path: &str) {
+    let canonical = match fs::canonicalize(project_root) {
+        Ok(p) => p,
+        Err(_) => project_root.to_path_buf(),
+    };
+    
+    {
+        let mut watched = WATCHED_WORKSPACES.lock().unwrap();
+        if watched.contains(&canonical) {
+            return;
+        }
+        watched.insert(canonical.clone());
+    }
+    
+    tracing::info!("Registering new workspace to watch: {:?}", canonical);
+    let db_path_clone = db_path.to_string();
+    let root_clone = canonical.clone();
+    
+    tokio::spawn(async move {
+        let db_path_reconcile = db_path_clone.clone();
+        let root_reconcile = root_clone.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = reconcile_workspace(&root_reconcile, &db_path_reconcile) {
+                tracing::error!("Workspace reconciliation failed for {:?}: {}", root_reconcile, e);
+            }
+        });
+        
+        if let Err(e) = watch_workspace(root_clone.clone(), db_path_clone).await {
+            tracing::error!("Watcher error for {:?}: {}", root_clone, e);
+        }
+    });
+}
 
 fn scan_directory(dir: &Path, files: &mut Vec<PathBuf>) {
     if let Ok(entries) = fs::read_dir(dir) {

@@ -26,24 +26,18 @@ async fn main() -> Result<()> {
     let service = GraphService { db_path: db_path.clone() };
     let service_handle = service.serve(stdio()).await?;
 
-    // Run reconciliation and watch tasks in the background to avoid blocking the MCP startup handshake
-    let db_path_clone = db_path.clone();
-    let current_dir_clone = current_dir.clone();
-    tokio::spawn(async move {
-        // Run reconciliation in blocking threadpool
-        let db_path_reconcile = db_path_clone.clone();
-        let current_dir_reconcile = current_dir_clone.clone();
-        tokio::task::spawn_blocking(move || {
-            if let Err(e) = icnow::watcher::reconcile_workspace(&current_dir_reconcile, &db_path_reconcile) {
-                tracing::error!("Workspace reconciliation failed: {}", e);
-            }
-        });
-
-        // Run live file watcher
-        if let Err(e) = icnow::watcher::watch_workspace(current_dir_clone, db_path_clone).await {
-            tracing::error!("Watcher error: {}", e);
-        }
-    });
+    // Only watch current_dir if it looks like a valid project root (has .git, Cargo.toml, etc.)
+    // to avoid watching the user's home directory if Claude Desktop started the server there.
+    let is_valid_project = current_dir.join(".git").exists() 
+        || current_dir.join("Cargo.toml").exists() 
+        || current_dir.join("Gemfile").exists() 
+        || current_dir.join("package.json").exists();
+        
+    if is_valid_project {
+        icnow::watcher::ensure_watching(&current_dir, &db_path);
+    } else {
+        tracing::info!("Current directory {:?} does not appear to be a project root. Skipping automatic watcher.", current_dir);
+    }
 
     service_handle.waiting().await?;
 

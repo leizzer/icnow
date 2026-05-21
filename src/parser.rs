@@ -124,8 +124,6 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
         ..Default::default()
     };
 
-    graph.connection().execute("BEGIN TRANSACTION")?;
-
     let mut process_all = || -> Result<()> {
         file_node.save(graph)?;
 
@@ -388,14 +386,32 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
         Ok(())
     };
 
-    match process_all() {
-        Ok(_) => {
-            graph.connection().execute("COMMIT TRANSACTION")?;
-            Ok(summary)
-        }
-        Err(e) => {
-            let _ = graph.connection().execute("ROLLBACK TRANSACTION");
-            Err(e)
-        }
-    }
+    process_all()?;
+    Ok(summary)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_twice() {
+        let db_path = "test_parse_twice.db";
+        let _ = std::fs::remove_file(db_path);
+        let graph = Graph::open(db_path).unwrap();
+
+        let ruby_file = "/Users/cristian/Projects/dgapp_bkp/app/controllers/api/v2/webhooks_controller.rb";
+
+        // First parse: nodes don't exist
+        let res1 = parse_file(ruby_file, &graph);
+        assert!(res1.is_ok(), "First parse failed: {:?}", res1.err());
+
+        // Second parse: nodes already exist, properties will be updated
+        let res2 = parse_file(ruby_file, &graph);
+        assert!(res2.is_ok(), "Second parse failed: {:?}", res2.err());
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+}
+
