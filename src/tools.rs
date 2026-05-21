@@ -210,6 +210,51 @@ impl GraphService {
         
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
+
+    #[tool(description = "Traces incoming or outgoing references for a specific node ID (e.g. finding callers or callees of a function). Provide the node_id and the direction ('incoming' for callers, 'outgoing' for callees).")]
+    fn get_dependencies(&self, Parameters(req): Parameters<GetDependenciesRequest>) -> Result<String, String> {
+        let safe_node_id = req.node_id.replace("'", "''");
+        let sql = if req.direction == "incoming" {
+            format!(
+                "SELECT np_source.value AS caller, e.type AS relationship \
+                 FROM edges e \
+                 JOIN node_props_text np_target ON e.target_id = np_target.node_id \
+                 JOIN property_keys pk_target ON np_target.key_id = pk_target.id AND pk_target.key = 'id' \
+                 JOIN node_props_text np_source ON e.source_id = np_source.node_id \
+                 JOIN property_keys pk_source ON np_source.key_id = pk_source.id AND pk_source.key = 'id' \
+                 WHERE np_target.value LIKE '%{}';",
+                safe_node_id
+            )
+        } else {
+            format!(
+                "SELECT e.type AS relationship, np_target.value AS callee \
+                 FROM edges e \
+                 JOIN node_props_text np_source ON e.source_id = np_source.node_id \
+                 JOIN property_keys pk_source ON np_source.key_id = pk_source.id AND pk_source.key = 'id' \
+                 JOIN node_props_text np_target ON e.target_id = np_target.node_id \
+                 JOIN property_keys pk_target ON np_target.key_id = pk_target.id AND pk_target.key = 'id' \
+                 WHERE np_source.value LIKE '%{}';",
+                safe_node_id
+            )
+        };
+        
+        let output = std::process::Command::new("sqlite3")
+            .arg("-cmd")
+            .arg(".timeout 5000")
+            .arg(&self.db_path)
+            .arg("-header")
+            .arg("-markdown")
+            .arg(&sql)
+            .output()
+            .map_err(|e| format!("Failed to execute query: {}", e))?;
+            
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Query failed: {}", err));
+        }
+        
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -244,4 +289,12 @@ pub struct SearchSymbolsRequest {
     pub query: String,
     #[schemars(description = "Optional limit on the number of results. Defaults to 50.")]
     pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetDependenciesRequest {
+    #[schemars(description = "The node ID or exact symbol name to trace dependencies for (e.g. 'src/main.rs::main' or just 'save_node').")]
+    pub node_id: String,
+    #[schemars(description = "Direction to trace: 'incoming' (find callers of this node) or 'outgoing' (find what this node calls).")]
+    pub direction: String, 
 }
