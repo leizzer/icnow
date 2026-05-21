@@ -4,7 +4,7 @@ This document tracks upcoming features, improvements, and architectural ideas to
 
 ## MUST IMPLEMENT
 
-- [ ] **`search_symbols` (Fuzzy / Pattern Search):** A high-level search tool to query the database for nodes matching a symbol name or pattern (e.g. searching for a class or function name). This resolves the bootstrap/discovery problem for agents.
+- [x] **`search_symbols` (Fuzzy / Pattern Search):** A high-level search tool to query the database for nodes matching a symbol name or pattern (e.g. searching for a class or function name). This resolves the bootstrap/discovery problem for agents.
 - [ ] **`get_dependencies` (Call Graph & References):** A single-call traversal tool to trace either callers (incoming references) or callees (outgoing calls) for a specific node ID without requiring complex raw SQL or Cypher.
 - [ ] **`get_file_structure` (Database File Outline):** Directly queries the database to return the structural components (methods, classes, imports) of an already-indexed file. Faster than re-parsing the file from disk.
 - [ ] **`list_indexed_files` (Workspace Inventory):** Lists all files currently indexed in the graph database so agents can instantly check what parts of the workspace are ready to query.
