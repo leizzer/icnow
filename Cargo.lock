@@ -340,7 +340,7 @@ dependencies = [
 
 [[package]]
 name = "icnow"
-version = "0.1.3"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "graphqlite",
