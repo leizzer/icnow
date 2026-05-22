@@ -4,18 +4,18 @@ This document outlines the approved new tools and enhancements for the `icnow` c
 
 ## 🛠️ New Tools to Implement
 
-### 1. `get_symbol_implementation(node_id: String)`
+### [x] 1. `get_symbol_implementation(node_id: String)`
 * **Description**: Retrieve the raw source code block (implementation body) of a specific symbol (e.g., class, method, or standalone function) without reading the entire file.
 * **Implementation details**: 
   - Save source code ranges or direct byte strings in the database when parsing in `src/parser.rs`.
   - Expose a new MCP tool in `src/tools.rs` to fetch this.
 
-### 2. `trace_call_path(start_node_id: String, end_node_id: String)`
+### [x] 2. `trace_call_path(start_node_id: String, end_node_id: String)`
 * **Description**: Trace multi-hop call paths (e.g., Controller -> Service -> Model) in a single invocation.
 * **Implementation details**:
   - Write a recursive Cypher query like `MATCH p = (start)-[:CALLS*1..5]->(end) ...` in `src/tools.rs`.
 
-### 3. `get_graph_schema()`
+### [x] 3. `get_graph_schema()`
 * **Description**: Provide documentation about the graph schema (available node labels, relationship types, and property keys).
 * **Why**: Helps agents construct valid Cypher queries without guessing.
 
