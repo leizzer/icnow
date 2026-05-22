@@ -1,25 +1,34 @@
-# Project TODOs & Future Ideas
+# `icnow` Tooling Roadmap
 
-This document tracks upcoming features, improvements, and architectural ideas to implement in the `icnow` codebase knowledge graph.
+This document outlines the approved new tools and enhancements for the `icnow` codebase to optimize it for LLM agents.
 
-## MUST IMPLEMENT
+## 🛠️ New Tools to Implement
 
-- [x] **`search_symbols` (Fuzzy / Pattern Search):** A high-level search tool to query the database for nodes matching a symbol name or pattern (e.g. searching for a class or function name). This resolves the bootstrap/discovery problem for agents.
-- [x] **`get_dependencies` (Call Graph & References):** A single-call traversal tool to trace either callers (incoming references) or callees (outgoing calls) for a specific node ID without requiring complex raw SQL or Cypher.
-- [x] **`get_file_structure` (Database File Outline):** Directly queries the database to return the structural components (methods, classes, imports) of an already-indexed file. Faster than re-parsing the file from disk.
-- [x] **`list_indexed_files` (Workspace Inventory):** Lists all files currently indexed in the graph database so agents can instantly check what parts of the workspace are ready to query.
-- [ ] **Interactive UI (Visualization):** Replace or augment the `export_graph.sh` Graphviz script with a lightweight web view (like `vis.js` or Mermaid) that serves the graph interactively on a local port.
+### 1. `get_symbol_implementation(node_id: String)`
+* **Description**: Retrieve the raw source code block (implementation body) of a specific symbol (e.g., class, method, or standalone function) without reading the entire file.
+* **Implementation details**: 
+  - Save source code ranges or direct byte strings in the database when parsing in `src/parser.rs`.
+  - Expose a new MCP tool in `src/tools.rs` to fetch this.
 
-## Parsing & Language Support
-- [x] **Extract Edges via Tree-Sitter:** The `CALLS` edges are already fully implemented! Tree-sitter actively analyzes function bodies and maps internal `CALLS` edges between methods. (Future sub-task: implement `USES` edges for struct instantiations/type dependencies).
-- [ ] **Database Optimization (Byte Ranges):** Migrate from storing raw `source_code` chunks inside the graph database to extracting Tree-sitter byte ranges (e.g., `start_byte`, `end_byte`). The query tool will then stream the code directly from disk to keep the database size incredibly optimized.
-- [ ] **Multi-Language Support:** Expand `src/parser.rs` beyond Rust. Add grammar crates like `tree-sitter-typescript`, `tree-sitter-python`, and `tree-sitter-ruby`.
-- [x] **Directory Parsing:** Already fully implemented by the `src/watcher.rs` background daemon! When a workspace is connected, `reconcile_workspace` recursively walks the project and ingests all missing or modified files in one go without manual agent intervention.
+### 2. `trace_call_path(start_node_id: String, end_node_id: String)`
+* **Description**: Trace multi-hop call paths (e.g., Controller -> Service -> Model) in a single invocation.
+* **Implementation details**:
+  - Write a recursive Cypher query like `MATCH p = (start)-[:CALLS*1..5]->(end) ...` in `src/tools.rs`.
 
-## Alternative Graph Extraction
-- [ ] **LSP/LSIF-like Intelligence without Host Dependencies:** Find a way to replicate the highly-accurate, pre-resolved references typically found in `.lsif` (Language Server Index Format) dumps, but *without* requiring the user to have a Language Server (LSP) installed on their computer. This could involve embedding a lightweight standalone static analyzer or generating LSIF-like edges dynamically.
-## MCP Server Enhancements
-- [x] **Query Tool:** Expose a new tool to the MCP server that allows AI agents to directly run Cypher queries against the database (e.g., `query_graph_cypher`).
-- [x] **Graph Context Tool:** Provide a tool that takes a specific file or node ID and automatically returns its immediate neighbors (implemented via `traverse_graph`).
+### 3. `get_graph_schema()`
+* **Description**: Provide documentation about the graph schema (available node labels, relationship types, and property keys).
+* **Why**: Helps agents construct valid Cypher queries without guessing.
 
+---
 
+## 📈 Improvements to Existing Tools
+
+### 1. Rich Search & Filtering in `search_symbols`
+* Add optional filters for node labels (e.g., search only classes, or search only methods).
+* Integrate fuzzy search (potentially via SQLite `FTS5` or simple distance matching) to allow typos.
+
+### 2. Hierarchical Outlines in `get_file_structure`
+* Change flat table outputs to nested outlines showing which methods belong to which classes.
+
+### 3. SQLite Batching/Transactions in Parser
+* Implement proper SQL transaction batching during indexing in `src/parser.rs` to avoid locking the SQLite database during high-frequency inserts (e.g., `CALL` nodes). Re-enable call extraction once fixed.
