@@ -269,6 +269,17 @@ impl GraphService {
             
         format_cypher_result(res)
     }
+
+    #[tool(description = "Generates a standalone, interactive HTML map of the knowledge graph and saves it to a specified file. The HTML file uses Cytoscape.js to visually render all files, functions, classes, and their relationships (IMPORTS, CALLS, CONTAINS). Agents should use this tool when the user asks for a visual representation of the architecture or a specific folder/file.")]
+    fn generate_interactive_map(&self, Parameters(req): Parameters<GenerateInteractiveMapRequest>) -> Result<String, String> {
+        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+        let filter = req.filter_path.unwrap_or_default();
+        
+        crate::exporter::generate_html(&db_path, &req.output_path, &filter)
+            .map_err(|e| format!("Failed to generate interactive map: {}", e))?;
+            
+        Ok(format!("Interactive map successfully generated and saved to: {}", req.output_path))
+    }
 }
 
 fn format_cypher_result(res: graphqlite::CypherResult) -> Result<String, String> {
@@ -380,6 +391,16 @@ pub struct ListIndexedFilesRequest {
 pub struct GetFileStructureRequest {
     #[schemars(description = "The absolute or relative path to the file to query (e.g. '/path/to/app/models/user.rb').")]
     pub file_path: String,
+    #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GenerateInteractiveMapRequest {
+    #[schemars(description = "The absolute path where the HTML file should be saved (e.g. '/path/to/project/architecture.html').")]
+    pub output_path: String,
+    #[schemars(description = "Optional path prefix to filter the exported graph. Only nodes starting with this path (e.g. a specific directory or file) will be included.")]
+    pub filter_path: Option<String>,
     #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
     pub project_root: Option<String>,
 }

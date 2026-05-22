@@ -50,8 +50,11 @@ fn scan_directory(dir: &Path, files: &mut Vec<PathBuf>) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name == ".git" || name == "target" || name == "vendor" || name == ".gemini" || name == "node_modules" {
+                let path_str = path.to_string_lossy();
+                if path_str.contains("/.git") || 
+                   path_str.contains("/target") || 
+                   path_str.contains("/node_modules") || 
+                   path_str.contains("/vendor") {
                     continue;
                 }
                 scan_directory(&path, files);
