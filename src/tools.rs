@@ -280,6 +280,116 @@ impl GraphService {
             
         Ok(format!("Interactive map successfully generated and saved to: {}", req.output_path))
     }
+
+    #[tool(description = "Retrieves the raw source code block (implementation body) of a specific symbol (e.g. class, method, or standalone function) without reading the entire file. Use this tool when you need to inspect the actual code logic of a node found via search_symbols or get_file_structure.")]
+    fn get_symbol_implementation(&self, Parameters(req): Parameters<GetSymbolImplementationRequest>) -> Result<String, String> {
+        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
+        let safe_node_id = req.node_id.replace("'", "''");
+        let cypher = format!("MATCH (n) WHERE n.id = '{}' RETURN n.source_code as source_code", safe_node_id);
+        
+        let conn = graphqlite::Connection::open(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
+        let res = conn.cypher(&cypher).map_err(|e| format!("Query failed: {}", e))?;
+        
+        let mut out = String::new();
+        for row in res {
+            if let Ok(src) = row.get::<String>("source_code") {
+                out = src;
+                break;
+            }
+        }
+        
+        if out.is_empty() {
+            return Err(format!("Source code not found for node '{}'. It might not be a structure/method, or the file lacks source mapping.", req.node_id));
+        }
+        
+        Ok(out)
+    }
+
+    #[tool(description = "Traces multi-hop call paths between a specific start_node_id and end_node_id up to a max_depth. Useful for finding how a controller reaches a specific database model or service without having to call get_dependencies repeatedly.")]
+    fn trace_call_path(&self, Parameters(req): Parameters<TraceCallPathRequest>) -> Result<String, String> {
+        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.start_node_id));
+        let conn = graphqlite::Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open graph database: {}", e))?;
+            
+        let max_depth = req.max_depth.unwrap_or(5);
+        if max_depth > 10 {
+            return Err("max_depth cannot exceed 10".into());
+        }
+        
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(vec![req.start_node_id.clone()]);
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(req.start_node_id.clone());
+        
+        let mut paths = Vec::new();
+        
+        while let Some(path) = queue.pop_front() {
+            if path.len() - 1 > max_depth as usize {
+                continue;
+            }
+            let current = path.last().unwrap();
+            if current == &req.end_node_id {
+                paths.push(path.clone());
+                if paths.len() >= 5 { break; } // Limit to 5 paths to avoid massive output
+                continue;
+            }
+            
+            let safe_curr = current.replace("'", "''");
+            let q = format!("MATCH (s)-[r:CALLS]->(t) WHERE s.id = '{}' RETURN t.id as target", safe_curr);
+            if let Ok(res) = conn.cypher(&q) {
+                for row in res {
+                    if let Ok(target) = row.get::<String>("target") {
+                        if !path.contains(&target) { // avoid cycles
+                            let mut new_path = path.clone();
+                            new_path.push(target.clone());
+                            queue.push_back(new_path);
+                        }
+                    }
+                }
+            }
+        }
+        
+        if paths.is_empty() {
+            return Ok(format!("No CALLS path found between {} and {} within {} hops.", req.start_node_id, req.end_node_id, max_depth));
+        }
+        
+        let mut out = format!("Found {} path(s) between {} and {}:\n\n", paths.len(), req.start_node_id, req.end_node_id);
+        for (i, p) in paths.iter().enumerate() {
+            out.push_str(&format!("Path {}:\n", i + 1));
+            out.push_str(&p.join(" -> "));
+            out.push_str("\n\n");
+        }
+        
+        Ok(out)
+    }
+
+    #[tool(description = "Returns documentation about the graph schema (available node labels, relationship types, and property keys). Useful to understand what data exists in the knowledge graph before writing Cypher queries.")]
+    fn get_graph_schema(&self, Parameters(_req): Parameters<GetGraphSchemaRequest>) -> Result<String, String> {
+        let schema = r#"
+# `icnow` Knowledge Graph Schema
+
+## Node Labels
+- `File`: Represents a source file (e.g. `src/main.rs`). Property `id` is the absolute path.
+- `Class` / `Module` / `Struct` / `Interface`: Represent object-oriented and structural containers.
+- `Method` / `Function`: Represent callable logic blocks.
+- `Import`: Represents a module or package import.
+- `Unresolved`: Represents a symbol that was called but its definition couldn't be accurately statically resolved.
+
+## Edge/Relationship Labels
+- `CONTAINS`: Structural containment (e.g. `File` -[:CONTAINS]-> `Class`, `File` -[:CONTAINS]-> `Function`).
+- `HAS_METHOD`: Class-to-method containment (e.g. `Class` -[:HAS_METHOD]-> `Method`).
+- `CALLS`: Function invocation (e.g. `Function` -[:CALLS]-> `Function`).
+- `IMPORTS`: Cross-file dependency tracking (e.g. `File` -[:IMPORTS]-> `File`).
+
+## Common Properties
+- `id`: The globally unique identifier for nodes/edges. For structural nodes, it's `filepath::namespace::name`.
+- `name`: The local name of the symbol.
+- `file`: The absolute path of the file containing this node.
+- `source_code`: The raw text implementation of the node (available for Classes, Methods, Functions).
+- `last_modified`: Epoch timestamp (for `File` nodes).
+        "#;
+        Ok(schema.trim().to_string())
+    }
 }
 
 fn format_cypher_result(res: graphqlite::CypherResult) -> Result<String, String> {
@@ -401,6 +511,32 @@ pub struct GenerateInteractiveMapRequest {
     pub output_path: String,
     #[schemars(description = "Optional path prefix to filter the exported graph. Only nodes starting with this path (e.g. a specific directory or file) will be included.")]
     pub filter_path: Option<String>,
+    #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetSymbolImplementationRequest {
+    #[schemars(description = "The globally unique string ID of the node to retrieve source code for (e.g. 'src/models.rs::Node').")]
+    pub node_id: String,
+    #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TraceCallPathRequest {
+    #[schemars(description = "The globally unique string ID of the starting node (caller).")]
+    pub start_node_id: String,
+    #[schemars(description = "The globally unique string ID of the target node (callee).")]
+    pub end_node_id: String,
+    #[schemars(description = "Maximum depth of recursive hops to traverse. Defaults to 5. Maximum is 10.")]
+    pub max_depth: Option<u32>,
+    #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetGraphSchemaRequest {
     #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
     pub project_root: Option<String>,
 }
