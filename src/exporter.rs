@@ -122,6 +122,7 @@ pub fn generate_html(db_path: &str, out_path: &str, filter_path: &str) -> Result
                     {{ selector: 'node', style: {{ 'label': 'data(name)', 'color': '#ffffff', 'text-outline-color': '#222', 'text-outline-width': 2, 'font-size': '10px', 'background-color': '#9C27B0', 'width': 25, 'height': 25 }} }},
                     {{ selector: 'node[label = "File"]', style: {{ 'background-color': '#4DB8FF', 'shape': 'round-rectangle', 'width': 35, 'height': 35 }} }},
                     {{ selector: 'node[label = "Function"]', style: {{ 'background-color': '#FF6B6B', 'shape': 'ellipse' }} }},
+                    {{ selector: 'node[label = "Method"]', style: {{ 'background-color': '#FF9800', 'shape': 'ellipse' }} }},
                     {{ selector: 'node[label = "Class"]', style: {{ 'background-color': '#4CAF50', 'shape': 'hexagon', 'width': 35, 'height': 30 }} }},
                     {{ selector: 'edge', style: {{ 'width': 1.5, 'line-color': '#555', 'target-arrow-color': '#555', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'opacity': 0.6, 'label': 'data(label)', 'font-size': '8px', 'color': '#888', 'text-rotation': 'autorotate', 'text-background-opacity': 1, 'text-background-color': '#121212' }} }},
                     {{ selector: 'edge[label = "CONTAINS"]', style: {{ 'line-color': '#4DB8FF', 'target-arrow-color': '#4DB8FF', 'opacity': 0.3, 'width': 1, 'line-style': 'dotted' }} }},
