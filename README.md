@@ -2,9 +2,9 @@
 
 ## Objective
 
-The objective of this project is to create a Model Context Protocol (MCP) server that allows AI agents to save, query, and navigate information about coding projects. By structuring codebase knowledge as a graph, AI agents can better reason about project architectures and dependencies. 
+The primary objective of this project is to **drastically reduce token usage and improve the speed of LLM Agents**. By structuring codebase knowledge as an instantly-queryable graph, AI agents can better reason about project architectures and pinpoint exactly the dependencies they need—without reading massive amounts of irrelevant source code or running slow grep searches across the filesystem.
 
-For example, in a Ruby on Rails project, this server is ideal for saving model relationships such as "Users have many Posts".
+Additionally, this Model Context Protocol (MCP) server allows agents to save, query, and navigate architectural information about coding projects. For example, in a Ruby on Rails project, this server is ideal for saving model relationships such as "Users have many Posts".
 
 ## Features
 
