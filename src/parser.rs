@@ -125,7 +125,20 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
     };
 
     let mut process_all = || -> Result<()> {
-        file_node.save(graph)?;
+        let mut bulk_nodes: Vec<(String, HashMap<String, String>, String)> = Vec::new();
+        let mut bulk_edges: Vec<(String, String, HashMap<String, String>, String)> = Vec::new();
+        
+        let mut add_node = |n: crate::models::Node| {
+            let mut props = n.properties.clone();
+            props.insert("kind".to_string(), n.kind.clone());
+            bulk_nodes.push((n.id, props, n.label));
+        };
+        
+        let mut add_edge = |e: crate::models::Edge| {
+            bulk_edges.push((e.source, e.target, e.properties, e.label));
+        };
+
+        add_node(file_node);
 
         while let Some(m) = matches.next() {
             let mut capture_map = HashMap::new();
@@ -235,8 +248,88 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
                         .to_string();
                 }
                 node_code = import_node.utf8_text(source_code.as_bytes())?.to_string();
-            } else if let Some(&_call_node) = capture_map.get("call.node") {
-                // temporarily disabled call extraction due to slow database writes
+            } else if let Some(&call_node) = capture_map.get("call.node") {
+                let func_text = capture_map.get("call.func")
+                    .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
+                    .unwrap_or("")
+                    .to_string();
+                let receiver_text = capture_map.get("call.receiver")
+                    .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
+                    .unwrap_or("")
+                    .to_string();
+                let target_name = if !receiver_text.is_empty() && !func_text.is_empty() {
+                    format!("{}.{}", receiver_text, func_text)
+                } else {
+                    func_text
+                };
+                
+                if !target_name.is_empty() {
+                    let mut curr = Some(call_node);
+                    let mut enclosing_func_name = String::new();
+                    while let Some(n) = curr {
+                        let k = n.kind();
+                        if k == "function_item" || k == "method" || k == "singleton_method" || k == "function_declaration" || k == "method_definition" {
+                            if let Some(name_node) = n.child_by_field_name("name") {
+                                if let Ok(text) = name_node.utf8_text(source_code.as_bytes()) {
+                                    enclosing_func_name = text.to_string();
+                                    if file_path.ends_with(".rs") {
+                                        if let Some(dl) = n.parent() {
+                                            if dl.kind() == "declaration_list" {
+                                                if let Some(impl_item) = dl.parent() {
+                                                    if impl_item.kind() == "impl_item" {
+                                                        if let Some(type_node) = impl_item.child_by_field_name("type") {
+                                                            if let Ok(struct_name) = type_node.utf8_text(source_code.as_bytes()) {
+                                                                enclosing_func_name = format!("{}::{}", struct_name, enclosing_func_name);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else if file_path.ends_with(".rb") {
+                                        if let Ok(ns) = get_ruby_namespace(n, source_code.as_bytes()) {
+                                            if !ns.is_empty() {
+                                                enclosing_func_name = format!("{}::{}", ns, enclosing_func_name);
+                                            }
+                                        }
+                                    } else {
+                                        if let Ok(ns) = get_ts_namespace(n, source_code.as_bytes()) {
+                                            if !ns.is_empty() {
+                                                enclosing_func_name = format!("{}::{}", ns, enclosing_func_name);
+                                            }
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        curr = n.parent();
+                    }
+                    
+                    if !enclosing_func_name.is_empty() {
+                        let source_id = format!("{}::{}", file_path, enclosing_func_name);
+                        
+                        let mut props = HashMap::new();
+                        props.insert("name".to_string(), target_name.clone());
+                        let target_node = crate::models::Node {
+                            id: target_name.clone(),
+                            label: "Unresolved".to_string(),
+                            kind: "unresolved_symbol".to_string(),
+                            properties: props,
+                        };
+                        add_node(target_node);
+
+                        let edge_id = format!("{}::CALLS::{}", source_id, target_name);
+                        let edge = crate::models::Edge {
+                            id: edge_id,
+                            source: source_id.clone(),
+                            target: target_name.clone(),
+                            label: "CALLS".to_string(),
+                            properties: HashMap::new(),
+                        };
+                        add_edge(edge);
+                    }
+                }
                 continue;
             }
 
@@ -258,7 +351,7 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
                     properties: props,
                 };
                 
-                node.save(graph)?;
+                add_node(node);
 
                 // Populate the FileSummary
                 if label == "Import" {
@@ -283,7 +376,7 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
                     label: "CONTAINS".to_string(),
                     properties: HashMap::new(),
                 };
-                edge.save(graph)?;
+                add_edge(edge);
 
                 // If it's a Function/Method and its name contains "::", it's an impl method, so link it to its Struct!
                 if label == "Function" || label == "Method" {
@@ -296,11 +389,14 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
                             label: "HAS_METHOD".to_string(),
                             properties: HashMap::new(),
                         };
-                        method_edge.save(graph)?;
+                        add_edge(method_edge);
                     }
                 }
             }
         }
+        
+        let node_map = graph.insert_nodes_bulk(bulk_nodes).map_err(|e| anyhow::anyhow!("Bulk insert nodes failed: {}", e))?;
+        graph.insert_edges_bulk(bulk_edges, &node_map).map_err(|e| anyhow::anyhow!("Bulk insert edges failed: {}", e))?;
         
         Ok(())
     };

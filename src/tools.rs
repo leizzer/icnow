@@ -196,10 +196,21 @@ impl GraphService {
         let limit = req.limit.unwrap_or(50);
         let safe_query = req.query.replace("'", "''");
         
-        let cypher_query = format!(
-            "MATCH (n) WHERE toLower(n.id) CONTAINS toLower('{}') RETURN n.id as id, labels(n) as label LIMIT {}",
-            safe_query, limit
+        let mut cypher_query = format!(
+            "MATCH (n) WHERE toLower(n.id) CONTAINS toLower('{}')",
+            safe_query
         );
+        
+        if let Some(filters) = &req.kind_filter {
+            if !filters.is_empty() {
+                let conditions: Vec<String> = filters.iter()
+                    .map(|f| format!("'{}' IN labels(n)", f.replace("'", "''")))
+                    .collect();
+                cypher_query.push_str(&format!(" AND ({})", conditions.join(" OR ")));
+            }
+        }
+        
+        cypher_query.push_str(&format!(" RETURN n.id as id, labels(n) as label LIMIT {}", limit));
         
         let conn = graphqlite::Connection::open(&db_path)
             .map_err(|e| format!("Failed to open graph database: {}", e))?;
@@ -241,18 +252,63 @@ impl GraphService {
         let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.file_path), None);
         let safe_file_path = req.file_path.replace("'", "''");
         
-        let cypher_query = format!(
-            "MATCH (f)-[r]->(n) WHERE f.id = '{}' AND type(r) = 'REL_CONTAINS' RETURN labels(n) as Type, n.id as NodeID, n.kind as AST_Kind ORDER BY Type, NodeID",
-            safe_file_path
-        );
-        
         let conn = graphqlite::Connection::open(&db_path)
             .map_err(|e| format!("Failed to open graph database: {}", e))?;
             
-        let res = conn.cypher(&cypher_query)
-            .map_err(|e| format!("Cypher query failed: {}", e))?;
-            
-        format_cypher_result(res)
+        let nodes_query = format!(
+            "MATCH (f)-[:CONTAINS]->(n) WHERE f.id = '{}' RETURN n.id as id, n.name as name, labels(n) as label",
+            safe_file_path
+        );
+        let res_nodes = conn.cypher(&nodes_query).map_err(|e| format!("Nodes query failed: {}", e))?;
+        
+        let mut nodes: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+        for row in res_nodes {
+            if let (Ok(id), Ok(name), Ok(label)) = (row.get::<String>("id"), row.get::<String>("name"), row.get::<String>("label")) {
+                let clean_label = label.replace("[\"", "").replace("\"]", "").replace("[", "").replace("]", "");
+                nodes.insert(id, (name, clean_label));
+            }
+        }
+        
+        let edges_query = format!(
+            "MATCH (s)-[:HAS_METHOD]->(m) WHERE s.id STARTS WITH '{}::' AND m.id STARTS WITH '{}::' RETURN s.id as parent, m.id as child",
+            safe_file_path, safe_file_path
+        );
+        let res_edges = conn.cypher(&edges_query).map_err(|e| format!("Edges query failed: {}", e))?;
+        
+        let mut children_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        let mut child_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        
+        for row in res_edges {
+            if let (Ok(p), Ok(c)) = (row.get::<String>("parent"), row.get::<String>("child")) {
+                children_map.entry(p).or_default().push(c.clone());
+                child_set.insert(c);
+            }
+        }
+        
+        if nodes.is_empty() {
+            return Ok(format!("No symbols found in file {}", req.file_path));
+        }
+        
+        let mut out = format!("File Structure for `{}`:\n\n", req.file_path);
+        let mut root_nodes: Vec<&String> = nodes.keys().filter(|k| !child_set.contains(*k)).collect();
+        root_nodes.sort();
+        
+        for root_id in root_nodes {
+            if let Some((name, label)) = nodes.get(root_id) {
+                out.push_str(&format!("- {} `{}` ({})\n", label, name, root_id));
+                if let Some(children) = children_map.get(root_id) {
+                    let mut sorted_children = children.clone();
+                    sorted_children.sort();
+                    for child_id in sorted_children {
+                        if let Some((cname, clabel)) = nodes.get(&child_id) {
+                            out.push_str(&format!("  - {} `{}` ({})\n", clabel, cname, child_id));
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(out)
     }
 
     #[tool(description = "Retrieves a comprehensive list of all file paths currently tracked and indexed in the knowledge graph. Agents should use this tool to discover available source code files in the workspace (such as controllers, models, or specific modules) that are ready for immediate semantic querying via `get_file_structure` or `query_graph_cypher` without needing to rely on standard terminal commands like `ls` or `find`.")]
@@ -479,6 +535,8 @@ pub struct SearchSymbolsRequest {
     pub limit: Option<u32>,
     #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
     pub project_root: Option<String>,
+    #[schemars(description = "Optional list of node labels to filter the results (e.g., ['Class', 'Method']).")]
+    pub kind_filter: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
