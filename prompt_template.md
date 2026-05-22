@@ -24,17 +24,32 @@ The `icnow` MCP server provides a pre-parsed, semantic knowledge graph of this c
 
 ## 🛠 Available Tools
 
-**`mcp__icnow__search_symbols`** - **START HERE** for finding where something is defined. Searches for symbols by name/pattern across the entire workspace without knowing the file path.
+**`mcp__icnow__get_graph_schema`** - Returns documentation about the graph schema (available node labels, relationship types, and property keys). Useful to understand what data exists before writing queries.
 ```javascript
-mcp__icnow__search_symbols(query: "UserController", limit: 10)
+mcp__icnow__get_graph_schema()
 ```
 
-**`mcp__icnow__get_file_structure`** - Returns a structural outline of a file (Classes, Methods) from the graph database. **More efficient than reading the file** when you only need to see what symbols are defined. Returns NodeIDs you can pass to `get_dependencies`.
+**`mcp__icnow__search_symbols`** - **START HERE** for finding where something is defined. Searches for symbols by name/pattern across the workspace. Use `kind_filter` to reduce noise.
+```javascript
+mcp__icnow__search_symbols(query: "UserController", limit: 10, kind_filter: ["Class"])
+```
+
+**`mcp__icnow__get_symbol_implementation`** - Retrieves the raw source code block (implementation body) of a specific symbol directly from the graph database without needing to use standard file read tools.
+```javascript
+mcp__icnow__get_symbol_implementation(node_id: "src/controllers/user.rb::UserController")
+```
+
+**`mcp__icnow__get_file_structure`** - Returns a hierarchical structural outline of a file (e.g. File -> Class -> Methods). **More efficient than reading the file** when you only need to see what symbols are defined.
 ```javascript
 mcp__icnow__get_file_structure(file_path: "src/main.rs")
 ```
 
-**`mcp__icnow__get_dependencies`** - Traces incoming (callers) or outgoing (callees) references for a specific node.
+**`mcp__icnow__trace_call_path`** - Traces multi-hop call paths between a specific start node and end node. Returns the exact chain of calls connecting them up to a max_depth.
+```javascript
+mcp__icnow__trace_call_path(start_node_id: "src/api.rs::endpoint", end_node_id: "src/db.rs::save")
+```
+
+**`mcp__icnow__get_dependencies`** - Traces immediate incoming (callers) or outgoing (callees) references for a specific node.
 ```javascript
 // Find what calls this method (incoming)
 mcp__icnow__get_dependencies(node_id: "src/main.rs::main", direction: "incoming")
@@ -61,11 +76,12 @@ MATCH (c:Class {name: "User"})-[:HAS_METHOD]->(m:Method) RETURN m.name ORDER BY 
 
 ## 🔄 Recommended Workflow
 
-1. **Find the Symbol**: Use `search_symbols` to find the NodeID and file path of a class or method.
-2. **Inspect the File**: Use `get_file_structure` to see what else lives in that file.
-3. **Trace Usage**: Use `get_dependencies` to see where a method is called across the codebase.
-4. **Visual Maps**: If the user wants to "see" the structure, use `generate_interactive_map`.
-5. **Fallback**: Only fall back to standard `read_file` if you specifically need the raw implementation details of a function body that aren't exposed in the graph.
+1. **Find the Symbol**: Use `search_symbols` (with `kind_filter` if possible) to find the NodeID of a class or method.
+2. **Read the Code**: Use `get_symbol_implementation` to read the exact function or class body directly from the database!
+3. **Inspect the File**: Use `get_file_structure` to see what else lives in that file hierarchically.
+4. **Trace Usage**: Use `trace_call_path` or `get_dependencies` to see how components connect across the codebase.
+5. **Visual Maps**: If the user wants to "see" the structure, use `generate_interactive_map`.
+6. **Fallback**: Only fall back to standard `read_file` or `grep` if `icnow` fails to provide the answer.
 
 ---
 
