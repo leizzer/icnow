@@ -39,13 +39,20 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
         ) {
             let clean_name = i_name.trim_start_matches("./").trim_start_matches("../");
             
+            let normalized_clean = if std::path::MAIN_SEPARATOR == '\\' {
+                clean_name.replace('/', "\\")
+            } else {
+                clean_name.to_string()
+            };
+            
             let mut resolved_target = None;
             for kf in &known_files {
                 // Exact path match
-                if kf.ends_with(&format!("/{}.rb", clean_name)) ||
-                   kf.ends_with(&format!("/{}.ts", clean_name)) ||
-                   kf.ends_with(&format!("/{}.tsx", clean_name)) ||
-                   kf.ends_with(&format!("/{}.rs", clean_name)) {
+                let sep = std::path::MAIN_SEPARATOR;
+                if kf.ends_with(&format!("{}{}.rb", sep, normalized_clean)) ||
+                   kf.ends_with(&format!("{}{}.ts", sep, normalized_clean)) ||
+                   kf.ends_with(&format!("{}{}.tsx", sep, normalized_clean)) ||
+                   kf.ends_with(&format!("{}{}.rs", sep, normalized_clean)) {
                    resolved_target = Some(kf.clone());
                    break;
                 }
@@ -53,7 +60,7 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
                 // Fallback: file stem match (if import is just "user_model")
                 let path = std::path::Path::new(kf);
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if stem == clean_name && !clean_name.contains('/') {
+                    if stem == clean_name && !clean_name.contains('/') && !clean_name.contains('\\') {
                         resolved_target = Some(kf.clone());
                         break;
                     }

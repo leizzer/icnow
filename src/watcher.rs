@@ -50,12 +50,10 @@ fn scan_directory(dir: &Path, files: &mut Vec<PathBuf>) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                let path_str = path.to_string_lossy();
-                if path_str.contains("/.git") || 
-                   path_str.contains("/target") || 
-                   path_str.contains("/node_modules") || 
-                   path_str.contains("/vendor") {
-                    continue;
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name == ".git" || name == "target" || name == "node_modules" || name == "vendor" {
+                        continue;
+                    }
                 }
                 scan_directory(&path, files);
             } else if path.is_file() {
@@ -176,8 +174,15 @@ fn handle_watcher_event(event: Event, conn: &Connection, graph: &Graph) {
             continue;
         }
         // Skip target, vendor, node_modules, etc.
-        let path_str_lower = path.to_string_lossy().to_string();
-        if path_str_lower.contains("/target/") || path_str_lower.contains("/vendor/") || path_str_lower.contains("/node_modules/") {
+        let has_ignored_dir = path.components().any(|comp| {
+            if let Some(s) = comp.as_os_str().to_str() {
+                let s_lower = s.to_lowercase();
+                s_lower == "target" || s_lower == "vendor" || s_lower == "node_modules" || s_lower == ".git"
+            } else {
+                false
+            }
+        });
+        if has_ignored_dir {
             continue;
         }
         
