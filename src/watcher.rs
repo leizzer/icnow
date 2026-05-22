@@ -146,6 +146,15 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     }
     
     tracing::info!("Workspace reconciliation complete. Deleted: {}, Reindexed: {}", files_to_delete.len(), files_to_reindex.len());
+    
+    // Trigger cross-file import reconciliation
+    let db_path_clone = db_path.to_string();
+    std::thread::spawn(move || {
+        if let Err(e) = crate::reconciler::reconcile_imports(&db_path_clone) {
+            tracing::error!("Import reconciliation failed: {}", e);
+        }
+    });
+    
     Ok(())
 }
 

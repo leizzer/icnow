@@ -235,6 +235,40 @@ impl GraphService {
             
         format_cypher_result(res)
     }
+
+    #[tool(description = "Returns the structural outline of a source file (including its Classes, Methods, and Singleton Methods) by directly querying the pre-indexed graph database. Use this tool instead of `parse_project_file` when you only need to see what symbols are defined inside a file without incurring the heavy cost of disk reads or re-parsing. It efficiently lists the NodeIDs which you can then pass to `traverse_graph` or `get_dependencies` to explore their call relationships.")]
+    fn get_file_structure(&self, Parameters(req): Parameters<GetFileStructureRequest>) -> Result<String, String> {
+        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.file_path), None);
+        let safe_file_path = req.file_path.replace("'", "''");
+        
+        let cypher_query = format!(
+            "MATCH (f)-[r]->(n) WHERE f.id = '{}' AND type(r) = 'REL_CONTAINS' RETURN labels(n) as Type, n.id as NodeID, n.kind as AST_Kind ORDER BY Type, NodeID",
+            safe_file_path
+        );
+        
+        let conn = graphqlite::Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open graph database: {}", e))?;
+            
+        let res = conn.cypher(&cypher_query)
+            .map_err(|e| format!("Cypher query failed: {}", e))?;
+            
+        format_cypher_result(res)
+    }
+
+    #[tool(description = "Retrieves a comprehensive list of all file paths currently tracked and indexed in the knowledge graph. Agents should use this tool to discover available source code files in the workspace (such as controllers, models, or specific modules) that are ready for immediate semantic querying via `get_file_structure` or `query_graph_cypher` without needing to rely on standard terminal commands like `ls` or `find`.")]
+    fn list_indexed_files(&self, Parameters(req): Parameters<ListIndexedFilesRequest>) -> Result<String, String> {
+        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+        
+        let cypher_query = "MATCH (n:File) RETURN n.id as FilePath ORDER BY FilePath";
+        
+        let conn = graphqlite::Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open graph database: {}", e))?;
+            
+        let res = conn.cypher(cypher_query)
+            .map_err(|e| format!("Cypher query failed: {}", e))?;
+            
+        format_cypher_result(res)
+    }
 }
 
 fn format_cypher_result(res: graphqlite::CypherResult) -> Result<String, String> {
@@ -332,6 +366,20 @@ pub struct GetDependenciesRequest {
     pub node_id: String,
     #[schemars(description = "Direction to trace: 'incoming' (find callers of this node) or 'outgoing' (find what this node calls).")]
     pub direction: String, 
+    #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListIndexedFilesRequest {
+    #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetFileStructureRequest {
+    #[schemars(description = "The absolute or relative path to the file to query (e.g. '/path/to/app/models/user.rb').")]
+    pub file_path: String,
     #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
     pub project_root: Option<String>,
 }
