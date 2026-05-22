@@ -21,14 +21,16 @@ This document outlines the approved new tools and enhancements for the `icnow` c
 
 ---
 
-## 📈 Improvements to Existing Tools
+## ⚡ Improvements to Existing Tools
 
-### 1. Rich Search & Filtering in `search_symbols`
-* Add optional filters for node labels (e.g., search only classes, or search only methods).
-* Integrate fuzzy search (potentially via SQLite `FTS5` or simple distance matching) to allow typos.
+### [x] 1. `search_symbols(query, limit, kind_filter)`
+* **Enhancement**: Add a `kind_filter: Option<Vec<String>>` argument (e.g., `["Class", "Method"]`).
+* **Why**: LLMs often search for "User" and get overwhelmed by `File`, `Function`, `Variable`, and `Unresolved` nodes. Filtering makes the tool incredibly precise.
 
-### 2. Hierarchical Outlines in `get_file_structure`
-* Change flat table outputs to nested outlines showing which methods belong to which classes.
+### [x] 2. `get_file_structure(file_path)`
+* **Enhancement**: Instead of returning a raw Cypher dump or flat list, recursively format it into an organized markdown tree (e.g., `File -> Class -> Methods`).
+* **Why**: LLMs process hierarchical semantic representations far better than flat relational tables.
 
-### 3. SQLite Batching/Transactions in Parser
-* Implement proper SQL transaction batching during indexing in `src/parser.rs` to avoid locking the SQLite database during high-frequency inserts (e.g., `CALL` nodes). Re-enable call extraction once fixed.
+### [x] 3. Fix SQLite Lock Errors (`database is locked (5)`)
+* **Enhancement**: In `src/parser.rs`, accumulating nodes/edges and inserting them in a batch transaction using `graphqlite`'s bulk insertion APIs, instead of autocommitting thousands of times per file.
+* **Why**: This prevents `icnow` from locking up the shared macOS directory during parsing and allows us to re-enable `CALL` node extraction safely.
