@@ -4,3 +4,4 @@ pub mod tools;
 pub mod watcher;
 pub mod reconciler;
 pub mod exporter;
+pub mod lsif;

@@ -446,6 +446,19 @@ impl GraphService {
         "#;
         Ok(schema.trim().to_string())
     }
+
+    #[tool(description = "Parses an LSIF (Language Server Index Format) dump file to extract precise definition and reference relationships across the codebase and imports them into the graph database. This is a heavy, precise scan that resolves cross-file connections with compiler-grade accuracy.")]
+    fn deep_scan(&self, Parameters(req): Parameters<DeepScanRequest>) -> Result<String, String> {
+        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+        
+        let (nodes, edges) = crate::lsif::parse_and_import_lsif(&req.lsif_path, &db_path, req.project_root.as_deref())
+            .map_err(|e| format!("LSIF Import failed: {}", e))?;
+            
+        Ok(format!(
+            "LSIF scan completed successfully.\n\n- **Nodes Imported**: {}\n- **Edges Imported**: {}",
+            nodes, edges
+        ))
+    }
 }
 
 fn format_cypher_result(res: graphqlite::CypherResult) -> Result<String, String> {
@@ -595,6 +608,14 @@ pub struct TraceCallPathRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetGraphSchemaRequest {
+    #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DeepScanRequest {
+    #[schemars(description = "The path to the LSIF dump file (e.g. 'dump.lsif').")]
+    pub lsif_path: String,
     #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
     pub project_root: Option<String>,
 }
