@@ -53,6 +53,106 @@ struct LsifMoniker {
     kind: String,
 }
 
+pub fn auto_generate_lsif(project_root: &str) -> Result<String> {
+    let root = Path::new(project_root);
+    
+    // 1. Detect Rust
+    if root.join("Cargo.toml").exists() {
+        tracing::info!("Detected Rust project. Running `rust-analyzer lsif`...");
+        let output = std::process::Command::new("rust-analyzer")
+            .arg("lsif")
+            .current_dir(project_root)
+            .output();
+            
+        let output = match output {
+            Ok(o) => o,
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "rust-analyzer is not installed or not in PATH. Please install it by running:\n\
+                     rustup component add rust-analyzer"
+                ));
+            }
+        };
+        
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("rust-analyzer lsif failed: {}", err));
+        }
+        
+        let temp_file_path = std::env::temp_dir().join("icnow_rust_lsif.lsif");
+        std::fs::write(&temp_file_path, output.stdout)?;
+        return Ok(temp_file_path.to_string_lossy().to_string());
+    }
+    
+    // 2. Detect TypeScript/React
+    if root.join("tsconfig.json").exists() {
+        tracing::info!("Detected TypeScript/React project. Running `npx -y @sourcegraph/lsif-tsc`...");
+        let output = std::process::Command::new("npx")
+            .args(&["-y", "@sourcegraph/lsif-tsc", "-p", "tsconfig.json"])
+            .current_dir(project_root)
+            .output();
+            
+        let output = match output {
+            Ok(o) => o,
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "npx/NodeJS is not installed or not in PATH. Please install NodeJS and npm."
+                ));
+            }
+        };
+        
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("npx @sourcegraph/lsif-tsc failed: {}", err));
+        }
+        
+        // npx @sourcegraph/lsif-tsc generates `dump.lsif` in the project root
+        let dump_path = root.join("dump.lsif");
+        if dump_path.exists() {
+            return Ok(dump_path.to_string_lossy().to_string());
+        } else {
+            return Err(anyhow::anyhow!("npx @sourcegraph/lsif-tsc completed successfully but did not generate a dump.lsif file."));
+        }
+    }
+    
+    // 3. Detect Ruby
+    if root.join("Gemfile").exists() || root.join("Rakefile").exists() {
+        tracing::info!("Detected Ruby project. Running `solargraph lsif`...");
+        let output = std::process::Command::new("solargraph")
+            .arg("lsif")
+            .current_dir(project_root)
+            .output();
+            
+        let output = match output {
+            Ok(o) => o,
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "solargraph is not installed or not in PATH. Please install it by running:\n\
+                     gem install solargraph"
+                ));
+            }
+        };
+        
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("solargraph lsif failed: {}", err));
+        }
+        
+        let dump_path = root.join("dump.lsif");
+        if dump_path.exists() {
+            return Ok(dump_path.to_string_lossy().to_string());
+        } else {
+            return Err(anyhow::anyhow!("solargraph lsif completed successfully but did not generate a dump.lsif file."));
+        }
+    }
+    
+    Err(anyhow::anyhow!(
+        "No supported project files (Cargo.toml, tsconfig.json, Gemfile) detected in {}.\n\
+         Please generate the LSIF dump file manually and pass its path using `lsif_path`.",
+        project_root
+    ))
+}
+
 pub fn parse_and_import_lsif(lsif_path: &str, db_path: &str, project_root: Option<&str>) -> Result<(usize, usize)> {
     tracing::info!("Starting LSIF import from {} into {}", lsif_path, db_path);
     

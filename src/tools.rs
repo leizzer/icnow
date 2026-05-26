@@ -447,12 +447,31 @@ impl GraphService {
         Ok(schema.trim().to_string())
     }
 
-    #[tool(description = "Parses an LSIF (Language Server Index Format) dump file to extract precise definition and reference relationships across the codebase and imports them into the graph database. This is a heavy, precise scan that resolves cross-file connections with compiler-grade accuracy.")]
+    #[tool(description = "Parses an LSIF (Language Server Index Format) dump file to extract precise definition and reference relationships across the codebase and imports them into the graph database. If no lsif_path is provided, it automatically detects the project type (Rust, Ruby, TypeScript/React) and generates the dump on the fly using standard CLI compilers.")]
     fn deep_scan(&self, Parameters(req): Parameters<DeepScanRequest>) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+        let inferred_root = req.project_root.clone()
+            .or_else(|| std::env::current_dir().ok().map(|d| d.to_string_lossy().to_string()))
+            .unwrap_or_else(|| ".".to_string());
+            
+        let db_path = self.resolve_db_path_and_watch(Some(&inferred_root), None, None);
         
-        let (nodes, edges) = crate::lsif::parse_and_import_lsif(&req.lsif_path, &db_path, req.project_root.as_deref())
-            .map_err(|e| format!("LSIF Import failed: {}", e))?;
+        let (actual_lsif_path, is_temp) = match req.lsif_path {
+            Some(path) => (path, false),
+            None => {
+                let generated = crate::lsif::auto_generate_lsif(&inferred_root)
+                    .map_err(|e| format!("Auto-generation of LSIF failed: {}", e))?;
+                (generated, true)
+            }
+        };
+        
+        let import_res = crate::lsif::parse_and_import_lsif(&actual_lsif_path, &db_path, Some(&inferred_root));
+        
+        // Clean up the temporary file if it was auto-generated
+        if is_temp {
+            let _ = std::fs::remove_file(&actual_lsif_path);
+        }
+        
+        let (nodes, edges) = import_res.map_err(|e| format!("LSIF Import failed: {}", e))?;
             
         Ok(format!(
             "LSIF scan completed successfully.\n\n- **Nodes Imported**: {}\n- **Edges Imported**: {}",
@@ -614,8 +633,8 @@ pub struct GetGraphSchemaRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeepScanRequest {
-    #[schemars(description = "The path to the LSIF dump file (e.g. 'dump.lsif').")]
-    pub lsif_path: String,
+    #[schemars(description = "Optional path to a pre-generated LSIF dump file. If omitted, icnow will attempt to auto-generate the LSIF dump based on project detection.")]
+    pub lsif_path: Option<String>,
     #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
     pub project_root: Option<String>,
 }
