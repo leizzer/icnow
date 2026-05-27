@@ -61,6 +61,7 @@ pub fn auto_generate_lsif(project_root: &str) -> Result<String> {
         tracing::info!("Detected Rust project. Running `rust-analyzer lsif`...");
         let output = std::process::Command::new("rust-analyzer")
             .arg("lsif")
+            .arg(project_root)
             .current_dir(project_root)
             .output();
             

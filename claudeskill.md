@@ -20,6 +20,10 @@ The `icnow` MCP server provides a pre-parsed, semantic knowledge graph of this c
 - Non-source code files (Markdown, JSON, Configs). Use standard read tools.
 - When you already know the exact file path and need to read the *entire* file body.
 
+### ⚠️ DO NOT GENERALIZE FAILURES:
+- **Never assume complete failure**: If an `icnow` query fails, returns empty results, or does not provide enough context for a *specific* query or file, do NOT assume the tool or the server is broken for other symbols or future tasks.
+- **Always try `icnow` first**: Treat each code investigation task as independent. You must *always* attempt to use `icnow` tools first for every new task, even if a previous `icnow` call in the same session was insufficient. A single missing edge or unparsed type does not make the rest of the database invalid.
+
 ---
 
 ## 🛠 Available Tools
@@ -86,6 +90,8 @@ MATCH (c:Class {name: "User"})-[:HAS_METHOD]->(m:Method) RETURN m.name ORDER BY 
 ---
 
 ## 📊 Call Tracking (Optional Logging)
-Every time you call an `icnow` tool, you must track it in a daily CSV file at `/tmp/{day}-{month}-{year}_icnow.csv`. Append a row with the format: `call, tool_name, success, enough`.
+Every time you call an `icnow` tool, you must track it in a daily CSV file at `/tmp/{day}-{month}-{year}_icnow.csv`. Append a row with the format: `call, tool_name, success, enough, why_not_enough, target_information`.
 - `success`: Was the execution technically successful?
 - `enough`: Did the graph provide enough context to prevent you from using native grep/read?
+- `why_not_enough`: Explain exactly why `icnow` was not enough and you had to fall back (e.g. "Empty search result", "Missing CALLS edge"). Use "N/A" if enough is true.
+- `target_information`: Describe what information you were trying to find in the database (e.g. "Definition of method call_webhook").
