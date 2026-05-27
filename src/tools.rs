@@ -196,9 +196,28 @@ impl GraphService {
         let limit = req.limit.unwrap_or(50);
         let safe_query = req.query.replace("'", "''");
         
+        let resolved_project_root = req.project_root.clone()
+            .or_else(|| infer_project_root(&db_path))
+            .unwrap_or_default();
+            
+        let project_root_norm = resolved_project_root.replace('\\', "/");
+        let project_root_with_slash = if project_root_norm.is_empty() {
+            "".to_string()
+        } else if project_root_norm.ends_with('/') {
+            project_root_norm
+        } else {
+            format!("{}/", project_root_norm)
+        };
+        
+        let safe_project_root = project_root_with_slash.replace("'", "''");
+        
         let mut cypher_query = format!(
-            "MATCH (n) WHERE toLower(n.id) CONTAINS toLower('{}')",
-            safe_query
+            "MATCH (n) WHERE \
+             (NOT 'File' IN labels(n) AND (toLower(n.name) CONTAINS toLower('{query}') OR toLower(replace(replace(n.id, '\\\\', '/'), '{root}', '')) ENDS WITH toLower('::{query}'))) \
+             OR \
+             ('File' IN labels(n) AND toLower(replace(replace(n.id, '\\\\', '/'), '{root}', '')) CONTAINS toLower('{query}'))",
+            query = safe_query,
+            root = safe_project_root
         );
         
         if let Some(filters) = &req.kind_filter {
@@ -210,7 +229,20 @@ impl GraphService {
             }
         }
         
-        cypher_query.push_str(&format!(" RETURN n.id as id, labels(n) as label LIMIT {}", limit));
+        cypher_query.push_str(&format!(
+            " RETURN n.id as id, labels(n) as label ORDER BY \
+             CASE \
+               WHEN 'Class' IN labels(n) THEN 1 \
+               WHEN 'Module' IN labels(n) THEN 2 \
+               WHEN 'Struct' IN labels(n) THEN 3 \
+               WHEN 'Interface' IN labels(n) THEN 4 \
+               WHEN 'Method' IN labels(n) THEN 5 \
+               WHEN 'Function' IN labels(n) THEN 6 \
+               WHEN 'File' IN labels(n) THEN 7 \
+               ELSE 8 \
+             END, n.id LIMIT {}",
+            limit
+        ));
         
         let conn = graphqlite::Connection::open(&db_path)
             .map_err(|e| format!("Failed to open graph database: {}", e))?;
