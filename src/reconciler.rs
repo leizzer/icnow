@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 pub fn reconcile_imports(db_path: &str) -> Result<()> {
     tracing::info!("Starting background import reconciliation...");
-    let conn = Connection::open(db_path)?;
-    let graph = Graph::open(db_path)?;
+    let conn = crate::open_db_connection(db_path)?;
+    let graph = crate::open_db_graph(db_path)?;
     
     // Fetch all Import nodes that have a CONTAINS edge from a File
     let query = "MATCH (f:File)-[r]->(i:Import) WHERE type(r) = 'REL_CONTAINS' RETURN f.id, i.id, i.name";

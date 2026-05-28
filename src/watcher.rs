@@ -69,7 +69,7 @@ fn scan_directory(dir: &Path, files: &mut Vec<PathBuf>) {
 
 pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     tracing::info!("Reconciling workspace: {:?}", root_dir);
-    let conn = Connection::open(db_path)?;
+    let conn = crate::open_db_connection(db_path)?;
     
     // 1. Get current DB files using Cypher
     let mut db_files = std::collections::HashMap::new();
@@ -228,14 +228,14 @@ pub async fn watch_workspace(root_dir: PathBuf, db_path: String) -> Result<()> {
             return;
         }
         
-        let graph = match Graph::open(&db_path) {
+        let graph = match crate::open_db_graph(&db_path) {
             Ok(g) => g,
             Err(e) => {
                 tracing::error!("Watcher failed to open DB: {}", e);
                 return;
             }
         };
-        let conn = match Connection::open(&db_path) {
+        let conn = match crate::open_db_connection(&db_path) {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!("Watcher failed to open connection: {}", e);

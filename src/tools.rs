@@ -60,7 +60,7 @@ impl GraphService {
     #[tool(description = "Saves a new node (file, function, class, module, etc.) into the graph. Use this tool manually only if the static parser missed a specific node or when explicitly registering domain-level concepts like Rails Controllers/Models and their fields.")]
     fn save_node(&self, Parameters(req): Parameters<SaveNodeRequest>) -> Result<String, String> {
         let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.node.id), None);
-        let graph = Graph::open(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
+        let graph = crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
         
         req.node.save(&graph).map_err(|e| e.to_string())?;
         
@@ -70,7 +70,7 @@ impl GraphService {
     #[tool(description = "Creates or updates a directed edge between two existing nodes (e.g. connecting a caller function to a callee method, or mapping database entity relationships). Use this tool to explicitly link imports to their physical file targets, functions to their internal calls, or class inheritance/mixins.")]
     fn save_edge(&self, Parameters(req): Parameters<SaveEdgeRequest>) -> Result<String, String> {
         let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.edge.source), None);
-        let graph = Graph::open(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
+        let graph = crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
         
         req.edge.save(&graph).map_err(|e| e.to_string())?;
         
@@ -80,7 +80,7 @@ impl GraphService {
     #[tool(description = "Parses a source file (Rust, Ruby, TypeScript, TSX) using Tree-sitter, extracts all structural nodes (Functions, Methods, Classes, Interfaces, Imports), and automatically adds them and their container relationships to the graph database. Call this tool first to map out the architecture of a new or modified file.")]
     fn parse_project_file(&self, Parameters(req): Parameters<ParseFileRequest>) -> Result<String, String> {
         let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.file_path), None);
-        let graph = Graph::open(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
+        let graph = crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
         let summary = crate::parser::parse_file(&req.file_path, &graph).map_err(|e| format!("Parse error: {}", e))?;
         
         let mut out = format!("Successfully parsed `{}` and added nodes to graph.\n\n", req.file_path);
@@ -169,7 +169,7 @@ impl GraphService {
             )
         };
         
-        let conn = graphqlite::Connection::open(&db_path)
+        let conn = crate::open_db_connection(&db_path)
             .map_err(|e| format!("Failed to open graph database: {}", e))?;
             
         let res = conn.cypher(&query)
@@ -181,7 +181,7 @@ impl GraphService {
     #[tool(description = "Executes a graph query using Cypher syntax (e.g., MATCH (source)-[rel]->(target) WHERE ...) to discover patterns, links, or cross-file dependencies. This is the preferred tool for high-level semantic lookups and pattern matching in the database.")]
     fn query_graph_cypher(&self, Parameters(req): Parameters<QueryGraphCypherRequest>) -> Result<String, String> {
         let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
-        let conn = graphqlite::Connection::open(&db_path)
+        let conn = crate::open_db_connection(&db_path)
             .map_err(|e| format!("Failed to open graph database: {}", e))?;
             
         let res = conn.cypher(&req.query)
@@ -244,7 +244,7 @@ impl GraphService {
             limit
         ));
         
-        let conn = graphqlite::Connection::open(&db_path)
+        let conn = crate::open_db_connection(&db_path)
             .map_err(|e| format!("Failed to open graph database: {}", e))?;
             
         let res = conn.cypher(&cypher_query)
@@ -270,7 +270,7 @@ impl GraphService {
             )
         };
         
-        let conn = graphqlite::Connection::open(&db_path)
+        let conn = crate::open_db_connection(&db_path)
             .map_err(|e| format!("Failed to open graph database: {}", e))?;
             
         let res = conn.cypher(&cypher_query)
@@ -284,7 +284,7 @@ impl GraphService {
         let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.file_path), None);
         let safe_file_path = req.file_path.replace("'", "''");
         
-        let conn = graphqlite::Connection::open(&db_path)
+        let conn = crate::open_db_connection(&db_path)
             .map_err(|e| format!("Failed to open graph database: {}", e))?;
             
         let nodes_query = format!(
@@ -349,7 +349,7 @@ impl GraphService {
         
         let cypher_query = "MATCH (n:File) RETURN n.id as FilePath ORDER BY FilePath";
         
-        let conn = graphqlite::Connection::open(&db_path)
+        let conn = crate::open_db_connection(&db_path)
             .map_err(|e| format!("Failed to open graph database: {}", e))?;
             
         let res = conn.cypher(cypher_query)
@@ -375,7 +375,7 @@ impl GraphService {
         let safe_node_id = req.node_id.replace("'", "''");
         let cypher = format!("MATCH (n) WHERE n.id = '{}' RETURN n.source_code as source_code", safe_node_id);
         
-        let conn = graphqlite::Connection::open(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
+        let conn = crate::open_db_connection(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
         let res = conn.cypher(&cypher).map_err(|e| format!("Query failed: {}", e))?;
         
         let mut out = String::new();
@@ -396,7 +396,7 @@ impl GraphService {
     #[tool(description = "Traces multi-hop call paths between a specific start_node_id and end_node_id up to a max_depth. Useful for finding how a controller reaches a specific database model or service without having to call get_dependencies repeatedly.")]
     fn trace_call_path(&self, Parameters(req): Parameters<TraceCallPathRequest>) -> Result<String, String> {
         let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.start_node_id));
-        let conn = graphqlite::Connection::open(&db_path)
+        let conn = crate::open_db_connection(&db_path)
             .map_err(|e| format!("Failed to open graph database: {}", e))?;
             
         let max_depth = req.max_depth.unwrap_or(5);

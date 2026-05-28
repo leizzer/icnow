@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::Write;
 
 pub fn generate_html(db_path: &str, out_path: &str, filter_path: &str) -> Result<()> {
-    let conn = Connection::open(db_path).context("Failed to open db")?;
+    let conn = crate::open_db_connection(db_path).context("Failed to open db")?;
 
     let mut elements = Vec::new();
     let mut included_nodes = std::collections::HashSet::new();
