@@ -1,5 +1,8 @@
 /target
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.png
 *.html
 
