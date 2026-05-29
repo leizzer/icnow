@@ -16,10 +16,12 @@ pub struct Node {
 
 impl Node {
     pub fn save(&self, graph: &graphqlite::Graph) -> anyhow::Result<()> {
-        let mut props = self.properties.clone();
-        props.insert("kind".to_string(), self.kind.clone());
+        let mut props: HashMap<String, SafePropertyValue> = self.properties.iter()
+            .map(|(k, v)| (k.clone(), SafePropertyValue(v.clone())))
+            .collect();
+        props.insert("kind".to_string(), SafePropertyValue(self.kind.clone()));
         
-        graph.upsert_node(&self.id, &props, &self.label)
+        graph.upsert_node(&self.id, props, &self.label)
              .map_err(|e| anyhow::anyhow!("Failed to save node: {}", e))
     }
 }
@@ -40,7 +42,68 @@ pub struct Edge {
 
 impl Edge {
     pub fn save(&self, graph: &graphqlite::Graph) -> anyhow::Result<()> {
-        graph.upsert_edge(&self.source, &self.target, &self.properties, &self.label)
+        let safe_props: HashMap<String, SafePropertyValue> = self.properties.iter()
+            .map(|(k, v)| (k.clone(), SafePropertyValue(v.clone())))
+            .collect();
+        graph.upsert_edge(&self.source, &self.target, safe_props, &self.label)
              .map_err(|e| anyhow::anyhow!("Failed to save edge: {}", e))
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SafePropertyValue(pub String);
+
+impl From<SafePropertyValue> for graphqlite::PropertyValue {
+    fn from(wrapper: SafePropertyValue) -> Self {
+        let s = wrapper.0;
+        let s_lower = s.to_lowercase();
+        if s_lower == "nan" || s_lower == "infinity" || s_lower == "inf" || s_lower == "-infinity" || s_lower == "-inf" {
+            return graphqlite::PropertyValue::Text(s);
+        }
+        graphqlite::PropertyValue::from(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graphqlite::PropertyValue;
+
+    #[test]
+    fn test_safe_property_value() {
+        // Special float string values should map to Text
+        match PropertyValue::from(SafePropertyValue("NaN".to_string())) {
+            PropertyValue::Text(val) => assert_eq!(val, "NaN"),
+            other => panic!("Expected PropertyValue::Text for NaN, got {:?}", other),
+        }
+        match PropertyValue::from(SafePropertyValue("Infinity".to_string())) {
+            PropertyValue::Text(val) => assert_eq!(val, "Infinity"),
+            other => panic!("Expected PropertyValue::Text for Infinity, got {:?}", other),
+        }
+        match PropertyValue::from(SafePropertyValue("inf".to_string())) {
+            PropertyValue::Text(val) => assert_eq!(val, "inf"),
+            other => panic!("Expected PropertyValue::Text for inf, got {:?}", other),
+        }
+        match PropertyValue::from(SafePropertyValue("-infinity".to_string())) {
+            PropertyValue::Text(val) => assert_eq!(val, "-infinity"),
+            other => panic!("Expected PropertyValue::Text for -infinity, got {:?}", other),
+        }
+        
+        // Normal numbers should map to Integer or Float
+        match PropertyValue::from(SafePropertyValue("123".to_string())) {
+            PropertyValue::Integer(val) => assert_eq!(val, 123),
+            other => panic!("Expected PropertyValue::Integer for 123, got {:?}", other),
+        }
+        match PropertyValue::from(SafePropertyValue("123.45".to_string())) {
+            PropertyValue::Float(val) => assert_eq!(val, 123.45),
+            other => panic!("Expected PropertyValue::Float for 123.45, got {:?}", other),
+        }
+        
+        // Arbitrary text should map to Text
+        match PropertyValue::from(SafePropertyValue("hello".to_string())) {
+            PropertyValue::Text(val) => assert_eq!(val, "hello"),
+            other => panic!("Expected PropertyValue::Text for hello, got {:?}", other),
+        }
+    }
+}
+

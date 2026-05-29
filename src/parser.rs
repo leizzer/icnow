@@ -395,8 +395,26 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
             }
         }
         
-        let node_map = graph.insert_nodes_bulk(bulk_nodes).map_err(|e| anyhow::anyhow!("Bulk insert nodes failed: {}", e))?;
-        graph.insert_edges_bulk(bulk_edges, &node_map).map_err(|e| anyhow::anyhow!("Bulk insert edges failed: {}", e))?;
+        let bulk_nodes_safe: Vec<(String, HashMap<String, crate::models::SafePropertyValue>, String)> = bulk_nodes.into_iter()
+            .map(|(id, props, label)| {
+                let safe_props = props.into_iter()
+                    .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
+                    .collect();
+                (id, safe_props, label)
+            })
+            .collect();
+            
+        let bulk_edges_safe: Vec<(String, String, HashMap<String, crate::models::SafePropertyValue>, String)> = bulk_edges.into_iter()
+            .map(|(source, target, props, label)| {
+                let safe_props = props.into_iter()
+                    .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
+                    .collect();
+                (source, target, safe_props, label)
+            })
+            .collect();
+
+        let node_map = graph.insert_nodes_bulk(bulk_nodes_safe).map_err(|e| anyhow::anyhow!("Bulk insert nodes failed: {}", e))?;
+        graph.insert_edges_bulk(bulk_edges_safe, &node_map).map_err(|e| anyhow::anyhow!("Bulk insert edges failed: {}", e))?;
         
         Ok(())
     };
