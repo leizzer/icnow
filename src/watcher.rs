@@ -135,7 +135,7 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     }
     
     // 5. Perform re-indexing
-    let graph = Graph::open(db_path)?;
+    let graph = crate::open_db_graph(db_path)?;
     for path in &files_to_reindex {
         let escaped = path.replace("'", "''");
         let q = format!("MATCH (n) WHERE n.id = '{escaped}' OR n.file = '{escaped}' DETACH DELETE n");

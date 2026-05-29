@@ -628,7 +628,7 @@ pub fn parse_and_import_lsif(lsif_path: &str, db_path: &str, project_root: Optio
     }
 
     // 4. Save to SQLite
-    let graph = Graph::open(db_path)?;
+    let graph = crate::open_db_graph(db_path)?;
     let node_map = graph.insert_nodes_bulk(bulk_nodes).map_err(|e| anyhow::anyhow!("Bulk insert nodes failed: {}", e))?;
     graph.insert_edges_bulk(bulk_edges, &node_map).map_err(|e| anyhow::anyhow!("Bulk insert edges failed: {}", e))?;
 
