@@ -22,4 +22,5 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-ruby = "0.23.1"
 tree-sitter-typescript = "0.23.2"
 notify = "8.2.0"
+libc = "0.2"
 

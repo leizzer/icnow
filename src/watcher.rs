@@ -201,6 +201,15 @@ fn handle_watcher_event(event: Event, conn: &Connection, graph: &Graph) {
     }
 }
 
+#[cfg(unix)]
+fn is_process_alive(pid: u32) -> bool {
+    unsafe {
+        let res = libc::kill(pid as libc::pid_t, 0);
+        res == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+}
+
+#[cfg(not(unix))]
 fn is_process_alive(pid: u32) -> bool {
     if cfg!(windows) {
         if let Ok(output) = std::process::Command::new("tasklist")
@@ -213,39 +222,15 @@ fn is_process_alive(pid: u32) -> bool {
             false
         }
     } else {
-        std::process::Command::new("kill")
-            .args(&["-0", &pid.to_string()])
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
+        false
     }
-}
-
-fn run_watcher_loop(root_dir: PathBuf, db_path: String) -> Result<()> {
-    let (tx, rx) = channel();
-    let mut watcher = RecommendedWatcher::new(tx, notify::Config::default())?;
-    watcher.watch(&root_dir, RecursiveMode::Recursive)?;
-    
-    let graph = crate::open_db_graph(&db_path)?;
-    let conn = crate::open_db_connection(&db_path)?;
-    
-    tracing::info!("Live file watcher active for PID {}.", std::process::id());
-    for res in rx {
-        match res {
-            Ok(event) => {
-                handle_watcher_event(event, &conn, &graph);
-            }
-            Err(e) => {
-                tracing::error!("Watcher event error: {}", e);
-            }
-        }
-    }
-    Ok(())
 }
 
 pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
     let pid = std::process::id();
     let mut is_active_watcher = false;
+    #[allow(unused_assignments)]
+    let mut _active_watcher: Option<RecommendedWatcher> = None;
     
     loop {
         let conn = match crate::open_db_connection(&db_path) {
@@ -288,10 +273,17 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
         };
         
         if can_acquire {
-            let res = conn.execute(&format!(
-                "INSERT OR REPLACE INTO icnow_watcher_lock (id, pid, last_heartbeat) VALUES (1, {}, {})",
-                pid, now
-            ));
+            let res = if !is_active_watcher {
+                conn.execute(&format!(
+                    "INSERT OR REPLACE INTO icnow_watcher_lock (id, pid, last_heartbeat) VALUES (1, {}, {})",
+                    pid, now
+                ))
+            } else {
+                conn.execute(&format!(
+                    "UPDATE icnow_watcher_lock SET last_heartbeat = {} WHERE pid = {}",
+                    now, pid
+                ))
+            };
             
             if res.is_ok() {
                 if !is_active_watcher {
@@ -302,29 +294,66 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
                         tracing::error!("Workspace reconciliation failed: {}", e);
                     }
                     
-                    let root_dir_clone = root_dir.clone();
+                    let (tx, rx) = channel();
+                    let mut watcher = match RecommendedWatcher::new(tx, notify::Config::default()) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            tracing::error!("Failed to create watcher: {}", e);
+                            is_active_watcher = false;
+                            std::thread::sleep(std::time::Duration::from_secs(5));
+                            continue;
+                        }
+                    };
+                    if let Err(e) = watcher.watch(&root_dir, RecursiveMode::Recursive) {
+                        tracing::error!("Failed to watch root dir: {}", e);
+                        is_active_watcher = false;
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        continue;
+                    }
+                    _active_watcher = Some(watcher);
+                    
                     let db_path_clone = db_path.clone();
                     std::thread::spawn(move || {
-                        if let Err(e) = run_watcher_loop(root_dir_clone, db_path_clone) {
-                            tracing::error!("Watcher loop failed: {}", e);
+                        let graph = match crate::open_db_graph(&db_path_clone) {
+                            Ok(g) => g,
+                            Err(e) => {
+                                tracing::error!("Watcher thread failed to open graph: {}", e);
+                                return;
+                            }
+                        };
+                        let conn = match crate::open_db_connection(&db_path_clone) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::error!("Watcher thread failed to open connection: {}", e);
+                                return;
+                            }
+                        };
+                        tracing::info!("Live file watcher active for PID {}.", std::process::id());
+                        for res in rx {
+                            match res {
+                                Ok(event) => {
+                                    handle_watcher_event(event, &conn, &graph);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Watcher event error: {}", e);
+                                }
+                            }
                         }
+                        tracing::info!("Watcher loop thread exiting cleanly.");
                     });
-                } else {
-                    let _ = conn.execute(&format!(
-                        "UPDATE icnow_watcher_lock SET last_heartbeat = {} WHERE pid = {}",
-                        now, pid
-                    ));
                 }
             } else {
-                if is_active_watcher {
-                    tracing::warn!("Failed to update heartbeat. Releasing lock status.");
-                    is_active_watcher = false;
+                if !is_active_watcher {
+                    tracing::warn!("Failed to initially acquire watcher lock in DB: {:?}", res.err());
+                } else {
+                    tracing::warn!("Failed to update watcher heartbeat in DB (transient lock?): {:?}", res.err());
                 }
             }
         } else {
             if is_active_watcher {
                 tracing::warn!("Lock stolen by another process. Stepping down as active watcher.");
                 is_active_watcher = false;
+                _active_watcher = None; // Drops RecommendedWatcher, stopping the watcher thread cleanly
             }
         }
         
