@@ -524,11 +524,21 @@ impl GraphService {
 
         let sqlite_conn = conn.sqlite_connection();
 
-        // 1. Validate that all link targets exist
+        // 1. Resolve and validate all link targets
+        let mut resolved_links = Vec::with_capacity(req.links.len());
         for target in &req.links {
-            let exists = self.node_exists(sqlite_conn, target);
-            if !exists {
-                return Err(format!("Link target not found: {}. Please make sure the code node has been scanned/indexed or the memory node exists.", target));
+            if self.node_exists(sqlite_conn, target) {
+                resolved_links.push(target.clone());
+            } else {
+                let resolved = self.resolve_target_id(target, &db_path);
+                if self.node_exists(sqlite_conn, &resolved) {
+                    resolved_links.push(resolved);
+                } else {
+                    return Err(format!(
+                        "Link target not found: '{}' (also tried resolving to '{}'). Please make sure the code node has been scanned/indexed or the memory node exists.",
+                        target, resolved
+                    ));
+                }
             }
         }
 
@@ -548,7 +558,7 @@ impl GraphService {
             .map_err(|e| format!("Failed to clear old links: {}", e))?;
 
         // 4. Create new links
-        for target_id in &req.links {
+        for target_id in &resolved_links {
             let rel = req.link_type.as_deref().unwrap_or_else(|| {
                 if target_id.starts_with("memory::") {
                     "SUB_CONCEPT"
@@ -566,7 +576,7 @@ impl GraphService {
             (&req.id, &req.name, &req.description, &keywords_str),
         ).map_err(|e| format!("Failed to update FTS index: {}", e))?;
 
-        Ok(format!("Memory node '{}' saved successfully with {} links.", req.id, req.links.len()))
+        Ok(format!("Memory node '{}' saved successfully with {} links.", req.id, resolved_links.len()))
     }
 
     #[tool(description = "Retrieves a detailed memory node, its description, associated keywords, and its connections to code files/methods and sub-concepts.")]
@@ -737,6 +747,36 @@ impl GraphService {
         } else {
             false
         }
+    }
+
+    fn resolve_target_id(&self, target: &str, db_path: &str) -> String {
+        if target.starts_with("memory::") {
+            return target.to_string();
+        }
+
+        let parts: Vec<&str> = target.split("::").collect();
+        if parts.is_empty() {
+            return target.to_string();
+        }
+
+        let first_part = parts[0];
+        let first_path = std::path::Path::new(first_part);
+        if first_path.is_relative() {
+            if let Some(db_dir) = std::path::Path::new(db_path).parent() {
+                let abs_path = db_dir.join(first_part);
+                let resolved_first = if let Ok(canon) = abs_path.canonicalize() {
+                    canon.to_string_lossy().to_string()
+                } else {
+                    abs_path.to_string_lossy().to_string()
+                };
+
+                let mut new_parts = vec![resolved_first.as_str()];
+                new_parts.extend_from_slice(&parts[1..]);
+                return new_parts.join("::");
+            }
+        }
+
+        target.to_string()
     }
 }
 
@@ -954,6 +994,11 @@ mod tests {
         // 1. Create a dummy code node so we can validate links pointing to it
         graph.upsert_node("src/main.rs", HashMap::<String, String>::new(), "File").unwrap();
 
+        // Create an absolute path node for testing relative path resolution
+        let cur_dir = std::env::current_dir().unwrap();
+        let abs_file_path = cur_dir.join("src/lib.rs").canonicalize().unwrap().to_string_lossy().to_string();
+        graph.upsert_node(&abs_file_path, HashMap::<String, String>::new(), "File").unwrap();
+
         let service = GraphService { db_path: db_path.to_string() };
 
         // 2. Try to save a memory node with an invalid prefix
@@ -993,6 +1038,26 @@ mod tests {
             project_root: None,
         })).unwrap();
         assert!(ok_res.contains("saved successfully"));
+
+        // 4b. Save a memory pointing to an absolute node via relative path target
+        let ok_res2 = service.save_memory(Parameters(SaveMemoryRequest {
+            id: "memory::relative_test".to_string(),
+            name: "Relative Path Test".to_string(),
+            description: "Testing relative path resolution.".to_string(),
+            keywords: vec![],
+            links: vec!["src/lib.rs".to_string()],
+            link_type: None,
+            project_root: None,
+        })).unwrap();
+        assert!(ok_res2.contains("saved successfully"));
+
+        // Query the memory and verify that the target was resolved to absolute path
+        let get_res2 = service.get_memory(Parameters(GetMemoryRequest {
+            id: "memory::relative_test".to_string(),
+            project_root: None,
+        })).unwrap();
+        assert!(get_res2.contains("Relative Path Test"));
+        assert!(get_res2.contains(&abs_file_path));
 
         // 5. Query the memory
         let get_res = service.get_memory(Parameters(GetMemoryRequest {
