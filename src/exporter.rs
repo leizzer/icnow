@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use graphqlite::Connection;
 use serde_json::json;
 use std::fs::File;
 use std::io::Write;

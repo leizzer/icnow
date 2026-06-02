@@ -1,6 +1,3 @@
-use graphqlite::Graph;
-use std::collections::HashMap;
-
 fn main() {
     let db_path = "knowledge_backup.db";
     let graph = graphqlite::Graph::open(db_path).unwrap();

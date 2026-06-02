@@ -124,7 +124,7 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
         ..Default::default()
     };
 
-    let mut process_all = || -> Result<()> {
+    let process_all = || -> Result<()> {
         let mut bulk_nodes: Vec<(String, HashMap<String, String>, String)> = Vec::new();
         let mut bulk_edges: Vec<(String, String, HashMap<String, String>, String)> = Vec::new();
         

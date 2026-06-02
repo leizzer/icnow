@@ -1,6 +1,5 @@
 use rmcp::{handler::server::wrapper::Parameters, schemars, tool, tool_router};
 use serde::Deserialize;
-use graphqlite::Graph;
 use std::collections::HashMap;
 
 use crate::models::{Node, Edge};
@@ -510,6 +509,235 @@ impl GraphService {
             nodes, edges
         ))
     }
+
+    #[tool(description = "Creates or updates a memory node representing a high-level concept or business logic flow, linking it to code nodes or other memory nodes. Enforces prefix 'memory::' and validates that all link targets exist in the database.")]
+    fn save_memory(&self, Parameters(req): Parameters<SaveMemoryRequest>) -> Result<String, String> {
+        if !req.id.starts_with("memory::") {
+            return Err("Memory ID must start with 'memory::' prefix (e.g., 'memory::stripe_webhooks')".to_string());
+        }
+
+        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+        let conn = crate::open_db_connection(&db_path)
+            .map_err(|e| format!("Failed to open DB: {}", e))?;
+        let graph = crate::open_db_graph(&db_path)
+            .map_err(|e| format!("Failed to open DB graph: {}", e))?;
+
+        let sqlite_conn = conn.sqlite_connection();
+
+        // 1. Validate that all link targets exist
+        for target in &req.links {
+            let exists = self.node_exists(sqlite_conn, target);
+            if !exists {
+                return Err(format!("Link target not found: {}. Please make sure the code node has been scanned/indexed or the memory node exists.", target));
+            }
+        }
+
+        // 2. Upsert properties of the Memory node
+        let mut props = HashMap::new();
+        props.insert("name".to_string(), req.name.clone());
+        props.insert("description".to_string(), req.description.clone());
+        let keywords_str = req.keywords.join(", ");
+        props.insert("keywords".to_string(), keywords_str.clone());
+
+        graph.upsert_node(&req.id, props, "Memory")
+            .map_err(|e| format!("Failed to save memory node: {}", e))?;
+
+        conn.cypher_builder("MATCH (m:Memory {id: $id})-[r]->() DELETE r")
+            .param("id", req.id.as_str())
+            .run()
+            .map_err(|e| format!("Failed to clear old links: {}", e))?;
+
+        // 4. Create new links
+        for target_id in &req.links {
+            let rel = req.link_type.as_deref().unwrap_or_else(|| {
+                if target_id.starts_with("memory::") {
+                    "SUB_CONCEPT"
+                } else {
+                    "EXPLAINS"
+                }
+            });
+            graph.upsert_edge(&req.id, target_id, HashMap::<String, String>::new(), rel)
+                .map_err(|e| format!("Failed to link {} to {}: {}", req.id, target_id, e))?;
+        }
+
+        // 5. Update FTS5 index
+        sqlite_conn.execute(
+            "INSERT OR REPLACE INTO memory_fts (id, name, description, keywords) VALUES (?, ?, ?, ?)",
+            (&req.id, &req.name, &req.description, &keywords_str),
+        ).map_err(|e| format!("Failed to update FTS index: {}", e))?;
+
+        Ok(format!("Memory node '{}' saved successfully with {} links.", req.id, req.links.len()))
+    }
+
+    #[tool(description = "Retrieves a detailed memory node, its description, associated keywords, and its connections to code files/methods and sub-concepts.")]
+    fn get_memory(&self, Parameters(req): Parameters<GetMemoryRequest>) -> Result<String, String> {
+        if !req.id.starts_with("memory::") {
+            return Err("Memory ID must start with 'memory::' prefix".to_string());
+        }
+
+        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+        let conn = crate::open_db_connection(&db_path)
+            .map_err(|e| format!("Failed to open DB: {}", e))?;
+
+        // 1. Fetch memory properties using Cypher
+        let query = "MATCH (m:Memory {id: $id}) RETURN m.name AS name, m.description AS description, m.keywords AS keywords";
+        let res = conn.cypher_builder(query)
+            .param("id", req.id.as_str())
+            .run()
+            .map_err(|e| format!("Failed to query memory: {}", e))?;
+
+        if res.is_empty() {
+            return Err(format!("Memory node '{}' not found.", req.id));
+        }
+
+        let row = &res[0];
+        let name = row.get::<String>("name").unwrap_or_default();
+        let description = row.get::<String>("description").unwrap_or_default();
+        let keywords = row.get::<String>("keywords").unwrap_or_default();
+
+        // 2. Fetch connected nodes using Cypher
+        let links_query = "MATCH (m:Memory {id: $id})-[r]->(target) RETURN target.id AS target_id, target.name AS target_name, type(r) AS rel_type, labels(target) AS target_labels";
+        let links_res = conn.cypher_builder(links_query)
+            .param("id", req.id.as_str())
+            .run()
+            .map_err(|e| format!("Failed to query links: {}", e))?;
+
+        let mut sub_concepts = Vec::new();
+        let mut code_nodes = Vec::new();
+
+        for l_row in &links_res {
+            if let (Ok(t_id), Ok(rel_type)) = (l_row.get::<String>("target_id"), l_row.get::<String>("rel_type")) {
+                let t_name = l_row.get::<String>("target_name").unwrap_or_default();
+                let labels_str = l_row.get::<String>("target_labels").unwrap_or_default();
+                let labels: Vec<String> = serde_json::from_str(&labels_str).unwrap_or_default();
+                let kind = labels.first().map(|s| s.as_str()).unwrap_or("Code");
+
+                let mut display_name = t_name;
+                if display_name.is_empty() {
+                    display_name = t_id.clone();
+                }
+
+                if t_id.starts_with("memory::") {
+                    sub_concepts.push(format!("* [**{}**]({}) - Relationship: `{}`", display_name, t_id, rel_type));
+                } else {
+                    code_nodes.push(format!("* **{}** (`{}`) [id: `{}`] - Relationship: `{}`", kind, display_name, t_id, rel_type));
+                }
+            }
+        }
+
+        let mut output = format!(
+            "# Memory: {}\n\n**ID**: `{}`\n**Keywords**: `{}`\n\n## Description\n{}\n",
+            name, req.id, keywords, description
+        );
+
+        if !sub_concepts.is_empty() {
+            output.push_str("\n## Related Sub-Concepts\n");
+            output.push_str(&sub_concepts.join("\n"));
+            output.push_str("\n");
+        }
+
+        if !code_nodes.is_empty() {
+            output.push_str("\n## Connected Code Elements\n");
+            output.push_str(&code_nodes.join("\n"));
+            output.push_str("\n");
+        }
+
+        Ok(output)
+    }
+
+    #[tool(description = "Searches for concepts and business logic flows using SQLite FTS5 relevance ranking. Returns matching memory nodes and their descriptions.")]
+    fn search_memories(&self, Parameters(req): Parameters<SearchMemoriesRequest>) -> Result<String, String> {
+        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+        let conn = crate::open_db_connection(&db_path)
+            .map_err(|e| format!("Failed to open DB: {}", e))?;
+
+        let sqlite_conn = conn.sqlite_connection();
+        
+        let cleaned_query = req.query.chars().map(|c| {
+            if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' }
+        }).collect::<String>();
+
+        let mut stmt = sqlite_conn.prepare(
+            "SELECT id, name, description, keywords, rank FROM memory_fts WHERE memory_fts MATCH ? ORDER BY rank LIMIT 10"
+        ).map_err(|e| format!("Failed to prepare search statement: {}", e))?;
+
+        let rows = stmt.query_map([&cleaned_query], |row| {
+            let id: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            let description: String = row.get(2)?;
+            let keywords: String = row.get(3)?;
+            Ok((id, name, description, keywords))
+        }).map_err(|e| format!("Search query execution failed: {}", e))?;
+
+        let mut results = Vec::new();
+        for r_res in rows {
+            if let Ok((id, name, desc, keywords)) = r_res {
+                let short_desc = if desc.len() > 150 {
+                    format!("{}...", &desc[..150].replace('\n', " "))
+                } else {
+                    desc.replace('\n', " ")
+                };
+                results.push(format!("* [**{}**]({}) - `{}`\n  * Description: {}\n  * Keywords: `{}`", name, id, id, short_desc, keywords));
+            }
+        }
+
+        if results.is_empty() {
+            return Ok("No matching memory nodes found.".to_string());
+        }
+
+        Ok(format!(
+            "# Search Results for: '{}'\n\n{}",
+            req.query,
+            results.join("\n\n")
+        ))
+    }
+
+    #[tool(description = "Lists all high-level concept memory nodes stored in the project's knowledge base.")]
+    fn list_memories(&self, Parameters(req): Parameters<ListMemoriesRequest>) -> Result<String, String> {
+        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+        let conn = crate::open_db_connection(&db_path)
+            .map_err(|e| format!("Failed to open DB: {}", e))?;
+
+        let query = "MATCH (m:Memory) RETURN m.id AS id, m.name AS name, m.keywords AS keywords ORDER BY m.name";
+        let res = conn.cypher(query)
+            .map_err(|e| format!("Failed to query memories list: {}", e))?;
+
+        if res.is_empty() {
+            return Ok("No memory nodes have been registered in the database yet. You can create one using the `save_memory` tool.".to_string());
+        }
+
+        let mut results = Vec::new();
+        for row in &res {
+            if let (Ok(id), Ok(name)) = (row.get::<String>("id"), row.get::<String>("name")) {
+                let keywords = row.get::<String>("keywords").unwrap_or_default();
+                results.push(format!("* [**{}**]({}) - `{}` (Keywords: `{}`)", name, id, id, keywords));
+            }
+        }
+
+        Ok(format!(
+            "# Registered System Concepts & Memories\n\nUse the `get_memory` tool with the ID to retrieve a full architectural look-ahead map for any concept.\n\n{}",
+            results.join("\n")
+        ))
+    }
+
+    fn node_exists(&self, conn: &rusqlite::Connection, id: &str) -> bool {
+        let id_key_id: Option<i64> = conn.query_row(
+            "SELECT id FROM property_keys WHERE key = 'id'",
+            [],
+            |row| row.get(0),
+        ).ok();
+        
+        if let Some(key_id) = id_key_id {
+            let exists: Option<i64> = conn.query_row(
+                "SELECT node_id FROM node_props_text WHERE key_id = ? AND value = ?",
+                (key_id, id),
+                |row| row.get(0),
+            ).ok();
+            exists.is_some()
+        } else {
+            false
+        }
+    }
 }
 
 fn format_cypher_result(res: graphqlite::CypherResult) -> Result<String, String> {
@@ -670,3 +898,136 @@ pub struct DeepScanRequest {
     #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
     pub project_root: Option<String>,
 }
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SaveMemoryRequest {
+    #[schemars(description = "The globally unique string ID of the memory node. MUST start with the prefix 'memory::' (e.g. 'memory::user_auth').")]
+    pub id: String,
+    #[schemars(description = "A concise, human-readable name for the concept or logic block (e.g. 'User Authentication Flow').")]
+    pub name: String,
+    #[schemars(description = "A detailed description of the memory concept, detailing its architectural role, business rules, or key steps.")]
+    pub description: String,
+    #[schemars(description = "A list of relevant keywords to index this memory for search (e.g. ['login', 'jwt', 'session']).")]
+    pub keywords: Vec<String>,
+    #[schemars(description = "A list of globally unique IDs of code elements (Files, Classes, Methods) or other memory nodes that this concept explains or relates to.")]
+    pub links: Vec<String>,
+    #[schemars(description = "Optional custom label type for the relationship edges created. Defaults to 'EXPLAINS' for code nodes and 'SUB_CONCEPT' for memory nodes.")]
+    pub link_type: Option<String>,
+    #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetMemoryRequest {
+    #[schemars(description = "The globally unique string ID of the memory node to retrieve (must start with 'memory::').")]
+    pub id: String,
+    #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SearchMemoriesRequest {
+    #[schemars(description = "The search query to match against memory names, descriptions, and keywords using SQLite FTS5.")]
+    pub query: String,
+    #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListMemoriesRequest {
+    #[schemars(description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory.")]
+    pub project_root: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_nodes() {
+        let db_path = "test_memories.db";
+        let _ = std::fs::remove_file(db_path);
+        
+        let _conn = crate::open_db_connection(db_path).unwrap();
+        let graph = crate::open_db_graph(db_path).unwrap();
+        
+        // 1. Create a dummy code node so we can validate links pointing to it
+        graph.upsert_node("src/main.rs", HashMap::<String, String>::new(), "File").unwrap();
+
+        let service = GraphService { db_path: db_path.to_string() };
+
+        // 2. Try to save a memory node with an invalid prefix
+        let err_res = service.save_memory(Parameters(SaveMemoryRequest {
+            id: "bad_prefix::auth".to_string(),
+            name: "Auth Flow".to_string(),
+            description: "Flow".to_string(),
+            keywords: vec![],
+            links: vec![],
+            link_type: None,
+            project_root: None,
+        }));
+        assert!(err_res.is_err());
+        assert!(err_res.unwrap_err().contains("prefix"));
+
+        // 3. Try to save with links that don't exist
+        let err_res = service.save_memory(Parameters(SaveMemoryRequest {
+            id: "memory::auth".to_string(),
+            name: "Auth Flow".to_string(),
+            description: "Flow".to_string(),
+            keywords: vec![],
+            links: vec!["src/non_existent.rs".to_string()],
+            link_type: None,
+            project_root: None,
+        }));
+        assert!(err_res.is_err());
+        assert!(err_res.unwrap_err().contains("Link target not found"));
+
+        // 4. Save a valid memory pointing to an existing file
+        let ok_res = service.save_memory(Parameters(SaveMemoryRequest {
+            id: "memory::auth".to_string(),
+            name: "Auth Flow".to_string(),
+            description: "User authentication using OAuth and JWT token validation.".to_string(),
+            keywords: vec!["oauth".to_string(), "jwt".to_string(), "token".to_string()],
+            links: vec!["src/main.rs".to_string()],
+            link_type: None,
+            project_root: None,
+        })).unwrap();
+        assert!(ok_res.contains("saved successfully"));
+
+        // 5. Query the memory
+        let get_res = service.get_memory(Parameters(GetMemoryRequest {
+            id: "memory::auth".to_string(),
+            project_root: None,
+        })).unwrap();
+        assert!(get_res.contains("Auth Flow"));
+        assert!(get_res.contains("JWT token validation"));
+        assert!(get_res.contains("Connected Code Elements"));
+        assert!(get_res.contains("src/main.rs"));
+
+        // 6. Test list_memories
+        let list_res = service.list_memories(Parameters(ListMemoriesRequest {
+            project_root: None,
+        })).unwrap();
+        assert!(list_res.contains("Auth Flow"));
+        assert!(list_res.contains("memory::auth"));
+
+        // 7. Test FTS5 search_memories
+        let search_res = service.search_memories(Parameters(SearchMemoriesRequest {
+            query: "jwt token".to_string(),
+            project_root: None,
+        })).unwrap();
+        assert!(search_res.contains("Auth Flow"));
+        assert!(search_res.contains("memory::auth"));
+
+        // Test search with prefix or non-alphanumeric chars
+        let search_res2 = service.search_memories(Parameters(SearchMemoriesRequest {
+            query: "oauth".to_string(),
+            project_root: None,
+        })).unwrap();
+        assert!(search_res2.contains("Auth Flow"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+}
+
+

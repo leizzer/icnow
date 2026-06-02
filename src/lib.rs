@@ -10,6 +10,7 @@ pub fn open_db_connection(path: &str) -> Result<graphqlite::Connection, graphqli
     let conn = graphqlite::Connection::open(path)?;
     let _ = conn.execute("PRAGMA journal_mode=WAL;");
     let _ = conn.execute("PRAGMA busy_timeout=5000;");
+    let _ = conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(id UNINDEXED, name, description, keywords);");
     Ok(conn)
 }
 

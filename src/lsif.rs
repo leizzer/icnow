@@ -4,7 +4,6 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use anyhow::Result;
-use graphqlite::Graph;
 
 #[derive(Debug, Deserialize)]
 struct LsifPosition {

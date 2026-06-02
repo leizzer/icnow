@@ -1,5 +1,4 @@
 use anyhow::Result;
-use graphqlite::{Connection, Graph};
 use std::collections::HashMap;
 
 pub fn reconcile_imports(db_path: &str) -> Result<()> {
