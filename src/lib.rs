@@ -1,10 +1,11 @@
-pub mod models;
-pub mod parser;
-pub mod tools;
-pub mod watcher;
-pub mod reconciler;
+pub mod api_handlers;
 pub mod exporter;
 pub mod lsif;
+pub mod models;
+pub mod parser;
+pub mod reconciler;
+pub mod tools;
+pub mod watcher;
 
 pub fn open_db_connection(path: &str) -> Result<graphqlite::Connection, graphqlite::Error> {
     let conn = graphqlite::Connection::open(path)?;

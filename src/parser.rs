@@ -16,6 +16,13 @@ pub struct FileSummary {
     pub methods: HashMap<String, Vec<(String, String)>>,
 }
 
+struct ParsedNode {
+    name: String,
+    kind: String,
+    label: String,
+    code: String,
+}
+
 fn get_ruby_namespace(node: tree_sitter::Node, source_code: &[u8]) -> Result<String> {
     let mut parts = Vec::new();
     let mut curr = Some(node);
@@ -38,7 +45,10 @@ fn get_ts_namespace(node: tree_sitter::Node, source_code: &[u8]) -> Result<Strin
     let mut curr = Some(node);
     while let Some(n) = curr {
         let kind = n.kind();
-        if kind == "class_declaration" || kind == "interface_declaration" || kind == "internal_module" {
+        if kind == "class_declaration"
+            || kind == "interface_declaration"
+            || kind == "internal_module"
+        {
             if let Some(name_node) = n.child_by_field_name("name") {
                 if let Ok(text) = name_node.utf8_text(source_code) {
                     parts.push(text.to_string());
@@ -51,19 +61,21 @@ fn get_ts_namespace(node: tree_sitter::Node, source_code: &[u8]) -> Result<Strin
     Ok(parts.join("::"))
 }
 
-pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
-    let source_code = fs::read_to_string(file_path)?;
-    let mut parser = Parser::new();
-    
-    let (language, query_str) = if file_path.ends_with(".rs") {
-        (tree_sitter_rust::LANGUAGE.into(), r#"
+fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'static str)> {
+    if file_path.ends_with(".rs") {
+        Ok((
+            tree_sitter_rust::LANGUAGE.into(),
+            r#"
             (function_item name: (identifier) @name) @function.node
             (struct_item name: (type_identifier) @name) @struct.node
             (use_declaration) @import.node
             (call_expression function: _ @call.func) @call.node
-        "#)
+            "#,
+        ))
     } else if file_path.ends_with(".rb") {
-        (tree_sitter_ruby::LANGUAGE.into(), r#"
+        Ok((
+            tree_sitter_ruby::LANGUAGE.into(),
+            r#"
             (method name: (identifier) @name) @function.node
             (singleton_method name: (identifier) @name) @function.node
             (class name: _ @name) @struct.node
@@ -71,14 +83,17 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
             (call method: (identifier) @import.method arguments: (argument_list (string (string_content) @name))) @import.node
             (call receiver: _ @call.receiver method: [(identifier) (constant)] @call.func) @call.node
             (call method: [(identifier) (constant)] @call.func) @call.node
-        "#)
+            "#,
+        ))
     } else if file_path.ends_with(".ts") || file_path.ends_with(".tsx") {
         let lang = if file_path.ends_with(".tsx") {
             tree_sitter_typescript::LANGUAGE_TSX.into()
         } else {
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
         };
-        (lang, r#"
+        Ok((
+            lang,
+            r#"
             (function_declaration name: (identifier) @name) @function.node
             (method_definition name: (property_identifier) @name) @function.node
             (class_declaration name: (type_identifier) @name) @struct.node
@@ -86,24 +101,258 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
             (internal_module name: (identifier) @name) @struct.node
             (import_statement source: (string (string_fragment) @name)) @import.node
             (call_expression function: _ @call.func) @call.node
-        "#)
+            "#,
+        ))
     } else {
-        return Err(anyhow::anyhow!("Unsupported file extension: {}", file_path));
+        Err(anyhow::anyhow!("Unsupported file extension: {file_path}"))
+    }
+}
+
+fn process_function_node(
+    func_node: tree_sitter::Node,
+    capture_map: &HashMap<&str, tree_sitter::Node>,
+    file_path: &str,
+    source_code: &[u8],
+) -> Result<Option<ParsedNode>> {
+    let mut name = capture_map
+        .get("name")
+        .and_then(|n| n.utf8_text(source_code).ok())
+        .unwrap_or("")
+        .to_string();
+
+    let kind = func_node.kind().to_string();
+    let label;
+
+    if file_path.ends_with(".rs") {
+        label = "Function".to_string();
+        if let Some(impl_item) = func_node.parent().and_then(|p| p.parent()) {
+            if impl_item.kind() == "impl_item" {
+                if let Some(type_node) = impl_item.child_by_field_name("type") {
+                    if let Ok(struct_name) = type_node.utf8_text(source_code) {
+                        name = format!("{struct_name}::{name}");
+                    }
+                }
+            }
+        }
+    } else if file_path.ends_with(".rb") {
+        label = "Method".to_string();
+        let ns = get_ruby_namespace(func_node, source_code)?;
+        let method_name = func_node
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source_code).ok())
+            .unwrap_or("");
+        name = if ns.is_empty() {
+            method_name.to_string()
+        } else {
+            format!("{ns}::{method_name}")
+        };
+    } else {
+        label = if kind == "method_definition" {
+            "Method".to_string()
+        } else {
+            "Function".to_string()
+        };
+        let ns = get_ts_namespace(func_node, source_code)?;
+        let func_name = func_node
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source_code).ok())
+            .unwrap_or("");
+        name = if ns.is_empty() {
+            func_name.to_string()
+        } else {
+            format!("{ns}::{func_name}")
+        };
+    }
+
+    let code = func_node.utf8_text(source_code)?.to_string();
+    Ok(Some(ParsedNode {
+        name,
+        kind,
+        label,
+        code,
+    }))
+}
+
+fn process_struct_node(
+    struct_node: tree_sitter::Node,
+    capture_map: &HashMap<&str, tree_sitter::Node>,
+    file_path: &str,
+    source_code: &[u8],
+) -> Result<Option<ParsedNode>> {
+    let mut name = capture_map
+        .get("name")
+        .and_then(|n| n.utf8_text(source_code).ok())
+        .unwrap_or("")
+        .to_string();
+
+    let kind = struct_node.kind().to_string();
+    let label;
+
+    if file_path.ends_with(".rb") {
+        label = if kind == "class" {
+            "Class".to_string()
+        } else {
+            "Module".to_string()
+        };
+        name = get_ruby_namespace(struct_node, source_code)?;
+    } else if file_path.ends_with(".rs") {
+        label = "Struct".to_string();
+    } else {
+        label = if kind == "class_declaration" {
+            "Class".to_string()
+        } else if kind == "interface_declaration" {
+            "Interface".to_string()
+        } else {
+            "Module".to_string() // internal_module
+        };
+        name = get_ts_namespace(struct_node, source_code)?;
+    }
+
+    let code = struct_node.utf8_text(source_code)?.to_string();
+    Ok(Some(ParsedNode {
+        name,
+        kind,
+        label,
+        code,
+    }))
+}
+
+fn process_import_node(
+    import_node: tree_sitter::Node,
+    capture_map: &HashMap<&str, tree_sitter::Node>,
+    file_path: &str,
+    source_code: &[u8],
+) -> Result<Option<ParsedNode>> {
+    let kind = "use_declaration".to_string();
+    let mut label = "Import".to_string();
+    let mut name = String::new();
+
+    if file_path.ends_with(".rs") {
+        name = import_node.utf8_text(source_code)?.to_string();
+    } else if file_path.ends_with(".rb") {
+        let mut is_valid_import = true;
+        if let Some(&method_node) = capture_map.get("import.method") {
+            let method_name = method_node.utf8_text(source_code)?.to_string();
+            if method_name != "require" && method_name != "include" {
+                is_valid_import = false;
+            }
+        }
+        if is_valid_import {
+            name = capture_map
+                .get("name")
+                .and_then(|n| n.utf8_text(source_code).ok())
+                .unwrap_or("")
+                .to_string();
+        } else {
+            label.clear();
+        }
+    } else {
+        name = capture_map
+            .get("name")
+            .and_then(|n| n.utf8_text(source_code).ok())
+            .unwrap_or("")
+            .to_string();
+    }
+
+    let code = import_node.utf8_text(source_code)?.to_string();
+    Ok(Some(ParsedNode {
+        name,
+        kind,
+        label,
+        code,
+    }))
+}
+
+fn process_call_node(
+    call_node: tree_sitter::Node,
+    capture_map: &HashMap<&str, tree_sitter::Node>,
+    file_path: &str,
+    source_code: &[u8],
+    bulk_nodes: &mut Vec<(String, HashMap<String, String>, String)>,
+    bulk_edges: &mut Vec<(String, String, HashMap<String, String>, String)>,
+) -> Result<()> {
+    let func_text = capture_map
+        .get("call.func")
+        .and_then(|n| n.utf8_text(source_code).ok())
+        .unwrap_or("")
+        .to_string();
+    let receiver_text = capture_map
+        .get("call.receiver")
+        .and_then(|n| n.utf8_text(source_code).ok())
+        .unwrap_or("")
+        .to_string();
+
+    let target_name = if !receiver_text.is_empty() && !func_text.is_empty() {
+        format!("{receiver_text}.{func_text}")
+    } else {
+        func_text
     };
-    
-    parser.set_language(&language)?;
 
-    let tree = parser.parse(&source_code, None).ok_or_else(|| anyhow::anyhow!("Failed to parse code"))?;
-    let root_node = tree.root_node();
+    if target_name.is_empty() {
+        return Ok(());
+    }
 
-    let query = Query::new(&language, query_str)
-        .map_err(|e| anyhow::anyhow!("Invalid query: {:?}", e))?;
+    let mut curr = Some(call_node);
+    let mut enclosing_func_name = String::new();
 
-    let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(&query, root_node, source_code.as_bytes());
+    while let Some(n) = curr {
+        let k = n.kind();
+        if k == "function_item"
+            || k == "method"
+            || k == "singleton_method"
+            || k == "function_declaration"
+            || k == "method_definition"
+        {
+            if let Some(name_node) = n.child_by_field_name("name") {
+                if let Ok(text) = name_node.utf8_text(source_code) {
+                    enclosing_func_name = text.to_string();
+                    if file_path.ends_with(".rs") {
+                        if let Some(impl_item) = n.parent().and_then(|p| p.parent()) {
+                            if impl_item.kind() == "impl_item" {
+                                if let Some(type_node) = impl_item.child_by_field_name("type") {
+                                    if let Ok(struct_name) = type_node.utf8_text(source_code) {
+                                        enclosing_func_name =
+                                            format!("{struct_name}::{enclosing_func_name}");
+                                    }
+                                }
+                            }
+                        }
+                    } else if file_path.ends_with(".rb") {
+                        if let Ok(ns) = get_ruby_namespace(n, source_code) {
+                            if !ns.is_empty() {
+                                enclosing_func_name = format!("{ns}::{enclosing_func_name}");
+                            }
+                        }
+                    } else if let Ok(ns) = get_ts_namespace(n, source_code) {
+                        if !ns.is_empty() {
+                            enclosing_func_name = format!("{ns}::{enclosing_func_name}");
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        curr = n.parent();
+    }
 
+    if !enclosing_func_name.is_empty() {
+        let source_id = format!("{file_path}::{enclosing_func_name}");
+
+        let mut props = HashMap::new();
+        props.insert("name".to_string(), target_name.clone());
+        props.insert("kind".to_string(), "unresolved_symbol".to_string());
+        bulk_nodes.push((target_name.clone(), props, "Unresolved".to_string()));
+
+        bulk_edges.push((source_id, target_name, HashMap::new(), "CALLS".to_string()));
+    }
+
+    Ok(())
+}
+
+fn get_file_metadata_properties(file_path: &str) -> HashMap<String, String> {
     let mut file_props = HashMap::new();
     file_props.insert("name".to_string(), file_path.to_string());
+    file_props.insert("kind".to_string(), "file".to_string());
     if let Ok(metadata) = fs::metadata(file_path) {
         if let Ok(modified) = metadata.modified() {
             if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
@@ -111,316 +360,167 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
             }
         }
     }
-    
-    let file_node = crate::models::Node {
-        id: file_path.to_string(),
-        label: "File".to_string(),
-        kind: "file".to_string(),
-        properties: file_props,
-    };
+    file_props
+}
+
+pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
+    let source_code = fs::read_to_string(file_path)?;
+    let mut parser = Parser::new();
+
+    let (language, query_str) = get_language_and_query(file_path)?;
+    parser.set_language(&language)?;
+
+    let tree = parser
+        .parse(&source_code, None)
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse code"))?;
+    let root_node = tree.root_node();
+
+    let query =
+        Query::new(&language, query_str).map_err(|e| anyhow::anyhow!("Invalid query: {e:?}"))?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, root_node, source_code.as_bytes());
 
     let mut summary = FileSummary {
         file_path: file_path.to_string(),
         ..Default::default()
     };
 
-    let process_all = || -> Result<()> {
-        let mut bulk_nodes: Vec<(String, HashMap<String, String>, String)> = Vec::new();
-        let mut bulk_edges: Vec<(String, String, HashMap<String, String>, String)> = Vec::new();
-        
-        let mut add_node = |n: crate::models::Node| {
-            let mut props = n.properties.clone();
-            props.insert("kind".to_string(), n.kind.clone());
-            bulk_nodes.push((n.id, props, n.label));
+    let mut bulk_nodes: Vec<(String, HashMap<String, String>, String)> = Vec::new();
+    let mut bulk_edges: Vec<(String, String, HashMap<String, String>, String)> = Vec::new();
+
+    let file_props = get_file_metadata_properties(file_path);
+    bulk_nodes.push((file_path.to_string(), file_props, "File".to_string()));
+
+    while let Some(m) = matches.next() {
+        let mut capture_map = HashMap::new();
+        for capture in m.captures {
+            let name: &str = query.capture_names()[capture.index as usize];
+            capture_map.insert(name, capture.node);
+        }
+
+        let parsed_node = if let Some(&func_node) = capture_map.get("function.node") {
+            process_function_node(func_node, &capture_map, file_path, source_code.as_bytes())?
+        } else if let Some(&struct_node) = capture_map.get("struct.node") {
+            process_struct_node(struct_node, &capture_map, file_path, source_code.as_bytes())?
+        } else if let Some(&import_node) = capture_map.get("import.node") {
+            process_import_node(import_node, &capture_map, file_path, source_code.as_bytes())?
+        } else if let Some(&call_node) = capture_map.get("call.node") {
+            process_call_node(
+                call_node,
+                &capture_map,
+                file_path,
+                source_code.as_bytes(),
+                &mut bulk_nodes,
+                &mut bulk_edges,
+            )?;
+            None
+        } else {
+            None
         };
-        
-        let mut add_edge = |e: crate::models::Edge| {
-            bulk_edges.push((e.source, e.target, e.properties, e.label));
-        };
 
-        add_node(file_node);
-
-        while let Some(m) = matches.next() {
-            let mut capture_map = HashMap::new();
-            for capture in m.captures {
-                let name: &str = &query.capture_names()[capture.index as usize];
-                capture_map.insert(name, capture.node);
-            }
-
-            let mut node_name = String::new();
-            let mut kind = String::new();
-            let mut label = String::new();
-            let mut node_code = String::new();
-
-            if let Some(&func_node) = capture_map.get("function.node") {
-                let mut name = capture_map.get("name")
-                    .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
-                    .unwrap_or("")
-                    .to_string();
-                
-                kind = func_node.kind().to_string();
-                if file_path.ends_with(".rs") {
-                    label = "Function".to_string();
-                    // Check if it's inside an impl block
-                    if let Some(dl) = func_node.parent() {
-                        if dl.kind() == "declaration_list" {
-                            if let Some(impl_item) = dl.parent() {
-                                if impl_item.kind() == "impl_item" {
-                                    if let Some(type_node) = impl_item.child_by_field_name("type") {
-                                        if let Ok(struct_name) = type_node.utf8_text(source_code.as_bytes()) {
-                                            name = format!("{}::{}", struct_name, name);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if file_path.ends_with(".rb") {
-                    label = "Method".to_string();
-                    let ns = get_ruby_namespace(func_node, source_code.as_bytes())?;
-                    let method_name = func_node.child_by_field_name("name")
-                        .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
-                        .unwrap_or("");
-                    name = if ns.is_empty() {
-                        method_name.to_string()
-                    } else {
-                        format!("{}::{}", ns, method_name)
-                    };
-                } else {
-                    label = if kind == "method_definition" { "Method".to_string() } else { "Function".to_string() };
-                    let ns = get_ts_namespace(func_node, source_code.as_bytes())?;
-                    let func_name = func_node.child_by_field_name("name")
-                        .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
-                        .unwrap_or("");
-                    name = if ns.is_empty() {
-                        func_name.to_string()
-                    } else {
-                        format!("{}::{}", ns, func_name)
-                    };
-                }
-                node_name = name;
-                node_code = func_node.utf8_text(source_code.as_bytes())?.to_string();
-            } else if let Some(&struct_node) = capture_map.get("struct.node") {
-                let mut name = capture_map.get("name")
-                    .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
-                    .unwrap_or("")
-                    .to_string();
-                
-                kind = struct_node.kind().to_string();
-                if file_path.ends_with(".rb") {
-                    label = if kind == "class" { "Class".to_string() } else { "Module".to_string() };
-                    name = get_ruby_namespace(struct_node, source_code.as_bytes())?;
-                } else if file_path.ends_with(".rs") {
-                    label = "Struct".to_string();
-                } else {
-                    label = if kind == "class_declaration" { "Class".to_string() }
-                            else if kind == "interface_declaration" { "Interface".to_string() }
-                            else { "Module".to_string() }; // internal_module
-                    name = get_ts_namespace(struct_node, source_code.as_bytes())?;
-                }
-                node_name = name;
-                node_code = struct_node.utf8_text(source_code.as_bytes())?.to_string();
-            } else if let Some(&import_node) = capture_map.get("import.node") {
-                kind = "use_declaration".to_string();
-                label = "Import".to_string();
-                if file_path.ends_with(".rs") {
-                    node_name = import_node.utf8_text(source_code.as_bytes())?.to_string();
-                } else if file_path.ends_with(".rb") {
-                    let mut is_valid_import = true;
-                    if let Some(&method_node) = capture_map.get("import.method") {
-                        let method_name = method_node.utf8_text(source_code.as_bytes())?.to_string();
-                        if method_name != "require" && method_name != "include" {
-                            is_valid_import = false;
-                        }
-                    }
-                    if is_valid_import {
-                        node_name = capture_map.get("name")
-                            .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
-                            .unwrap_or("")
-                            .to_string();
-                    } else {
-                        label.clear();
-                    }
-                } else {
-                    node_name = capture_map.get("name")
-                        .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
-                        .unwrap_or("")
-                        .to_string();
-                }
-                node_code = import_node.utf8_text(source_code.as_bytes())?.to_string();
-            } else if let Some(&call_node) = capture_map.get("call.node") {
-                let func_text = capture_map.get("call.func")
-                    .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
-                    .unwrap_or("")
-                    .to_string();
-                let receiver_text = capture_map.get("call.receiver")
-                    .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
-                    .unwrap_or("")
-                    .to_string();
-                let target_name = if !receiver_text.is_empty() && !func_text.is_empty() {
-                    format!("{}.{}", receiver_text, func_text)
-                } else {
-                    func_text
-                };
-                
-                if !target_name.is_empty() {
-                    let mut curr = Some(call_node);
-                    let mut enclosing_func_name = String::new();
-                    while let Some(n) = curr {
-                        let k = n.kind();
-                        if k == "function_item" || k == "method" || k == "singleton_method" || k == "function_declaration" || k == "method_definition" {
-                            if let Some(name_node) = n.child_by_field_name("name") {
-                                if let Ok(text) = name_node.utf8_text(source_code.as_bytes()) {
-                                    enclosing_func_name = text.to_string();
-                                    if file_path.ends_with(".rs") {
-                                        if let Some(dl) = n.parent() {
-                                            if dl.kind() == "declaration_list" {
-                                                if let Some(impl_item) = dl.parent() {
-                                                    if impl_item.kind() == "impl_item" {
-                                                        if let Some(type_node) = impl_item.child_by_field_name("type") {
-                                                            if let Ok(struct_name) = type_node.utf8_text(source_code.as_bytes()) {
-                                                                enclosing_func_name = format!("{}::{}", struct_name, enclosing_func_name);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } else if file_path.ends_with(".rb") {
-                                        if let Ok(ns) = get_ruby_namespace(n, source_code.as_bytes()) {
-                                            if !ns.is_empty() {
-                                                enclosing_func_name = format!("{}::{}", ns, enclosing_func_name);
-                                            }
-                                        }
-                                    } else {
-                                        if let Ok(ns) = get_ts_namespace(n, source_code.as_bytes()) {
-                                            if !ns.is_empty() {
-                                                enclosing_func_name = format!("{}::{}", ns, enclosing_func_name);
-                                            }
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                        curr = n.parent();
-                    }
-                    
-                    if !enclosing_func_name.is_empty() {
-                        let source_id = format!("{}::{}", file_path, enclosing_func_name);
-                        
-                        let mut props = HashMap::new();
-                        props.insert("name".to_string(), target_name.clone());
-                        let target_node = crate::models::Node {
-                            id: target_name.clone(),
-                            label: "Unresolved".to_string(),
-                            kind: "unresolved_symbol".to_string(),
-                            properties: props,
-                        };
-                        add_node(target_node);
-
-                        let edge_id = format!("{}::CALLS::{}", source_id, target_name);
-                        let edge = crate::models::Edge {
-                            id: edge_id,
-                            source: source_id.clone(),
-                            target: target_name.clone(),
-                            label: "CALLS".to_string(),
-                            properties: HashMap::new(),
-                        };
-                        add_edge(edge);
-                    }
-                }
+        if let Some(node) = parsed_node {
+            if node.name.is_empty() || node.label.is_empty() {
                 continue;
             }
 
-            if !node_name.is_empty() && !label.is_empty() {
-                let mut props = HashMap::new();
-                props.insert("name".to_string(), node_name.clone());
-                props.insert("file".to_string(), file_path.to_string());
-                
-                if !node_code.is_empty() {
-                    props.insert("source_code".to_string(), node_code);
+            let mut props = HashMap::new();
+            props.insert("name".to_string(), node.name.clone());
+            props.insert("file".to_string(), file_path.to_string());
+            props.insert("kind".to_string(), node.kind);
+
+            if !node.code.is_empty() {
+                props.insert("source_code".to_string(), node.code);
+            }
+
+            let id = format!("{file_path}::{}", node.name);
+            bulk_nodes.push((id.clone(), props, node.label.clone()));
+
+            // Populate the FileSummary
+            if node.label == "Import" {
+                summary.imports.push(node.name.clone());
+            } else if node.label == "Class"
+                || node.label == "Module"
+                || node.label == "Struct"
+                || node.label == "Interface"
+            {
+                summary
+                    .structures
+                    .entry(node.label.clone())
+                    .or_default()
+                    .push(node.name.clone());
+            } else if node.label == "Method" || node.label == "Function" {
+                if let Some((struct_part, method_part)) = node.name.rsplit_once("::") {
+                    summary
+                        .methods
+                        .entry(struct_part.to_string())
+                        .or_default()
+                        .push((node.label.clone(), method_part.to_string()));
+                } else {
+                    summary
+                        .standalone_functions
+                        .entry(node.label.clone())
+                        .or_default()
+                        .push(node.name.clone());
                 }
-                
-                let id = format!("{}::{}", file_path, node_name);
-                
-                let node = crate::models::Node {
-                    id: id.clone(),
-                    label: label.clone(),
-                    kind: kind.clone(),
-                    properties: props,
-                };
-                
-                add_node(node);
+            }
 
-                // Populate the FileSummary
-                if label == "Import" {
-                    summary.imports.push(node_name.clone());
-                } else if label == "Class" || label == "Module" || label == "Struct" || label == "Interface" {
-                    summary.structures.entry(label.clone()).or_insert_with(Vec::new).push(node_name.clone());
-                } else if label == "Method" || label == "Function" {
-                    if let Some((struct_part, method_part)) = node_name.rsplit_once("::") {
-                        summary.methods.entry(struct_part.to_string())
-                            .or_insert_with(Vec::new)
-                            .push((label.clone(), method_part.to_string()));
-                    } else {
-                        summary.standalone_functions.entry(label.clone()).or_insert_with(Vec::new).push(node_name.clone());
-                    }
-                }
+            // Create structural edge between File and Content Node
+            bulk_edges.push((
+                file_path.to_string(),
+                id.clone(),
+                HashMap::new(),
+                "CONTAINS".to_string(),
+            ));
 
-                // Create structural edge between File and Content Node
-                let edge = crate::models::Edge {
-                    id: format!("{}::CONTAINS::{}", file_path, id),
-                    source: file_path.to_string(),
-                    target: id.clone(),
-                    label: "CONTAINS".to_string(),
-                    properties: HashMap::new(),
-                };
-                add_edge(edge);
-
-                // If it's a Function/Method and its name contains "::", it's an impl method, so link it to its Struct!
-                if label == "Function" || label == "Method" {
-                    if let Some((struct_part, _method_part)) = node_name.rsplit_once("::") {
-                        let struct_id = format!("{}::{}", file_path, struct_part);
-                        let method_edge = crate::models::Edge {
-                            id: format!("{}::HAS_METHOD::{}", struct_id, id),
-                            source: struct_id,
-                            target: id,
-                            label: "HAS_METHOD".to_string(),
-                            properties: HashMap::new(),
-                        };
-                        add_edge(method_edge);
-                    }
+            // If it's a Function/Method and its name contains "::", it's an impl method, link it to Struct
+            if node.label == "Function" || node.label == "Method" {
+                if let Some((struct_part, _method_part)) = node.name.rsplit_once("::") {
+                    let struct_id = format!("{file_path}::{struct_part}");
+                    bulk_edges.push((struct_id, id, HashMap::new(), "HAS_METHOD".to_string()));
                 }
             }
         }
-        
-        let bulk_nodes_safe: Vec<(String, HashMap<String, crate::models::SafePropertyValue>, String)> = bulk_nodes.into_iter()
-            .map(|(id, props, label)| {
-                let safe_props = props.into_iter()
-                    .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
-                    .collect();
-                (id, safe_props, label)
-            })
-            .collect();
-            
-        let bulk_edges_safe: Vec<(String, String, HashMap<String, crate::models::SafePropertyValue>, String)> = bulk_edges.into_iter()
-            .map(|(source, target, props, label)| {
-                let safe_props = props.into_iter()
-                    .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
-                    .collect();
-                (source, target, safe_props, label)
-            })
-            .collect();
+    }
 
-        let node_map = graph.insert_nodes_bulk(bulk_nodes_safe).map_err(|e| anyhow::anyhow!("Bulk insert nodes failed: {}", e))?;
-        graph.insert_edges_bulk(bulk_edges_safe, &node_map).map_err(|e| anyhow::anyhow!("Bulk insert edges failed: {}", e))?;
-        
-        Ok(())
-    };
+    let bulk_nodes_safe: Vec<(
+        String,
+        HashMap<String, crate::models::SafePropertyValue>,
+        String,
+    )> = bulk_nodes
+        .into_iter()
+        .map(|(id, props, label)| {
+            let safe_props = props
+                .into_iter()
+                .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
+                .collect();
+            (id, safe_props, label)
+        })
+        .collect();
 
+    let bulk_edges_safe: Vec<(
+        String,
+        String,
+        HashMap<String, crate::models::SafePropertyValue>,
+        String,
+    )> = bulk_edges
+        .into_iter()
+        .map(|(source, target, props, label)| {
+            let safe_props = props
+                .into_iter()
+                .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
+                .collect();
+            (source, target, safe_props, label)
+        })
+        .collect();
 
-    process_all()?;
+    let node_map = graph
+        .insert_nodes_bulk(bulk_nodes_safe)
+        .map_err(|e| anyhow::anyhow!("Bulk insert nodes failed: {e}"))?;
+    graph
+        .insert_edges_bulk(bulk_edges_safe, &node_map)
+        .map_err(|e| anyhow::anyhow!("Bulk insert edges failed: {e}"))?;
+
     Ok(summary)
 }
 
@@ -434,7 +534,8 @@ mod tests {
         let _ = std::fs::remove_file(db_path);
         let graph = Graph::open(db_path).unwrap();
 
-        let ruby_file = "/Users/cristian/Projects/dgapp_bkp/app/controllers/api/v2/webhooks_controller.rb";
+        let ruby_file =
+            "/Users/cristian/Projects/dgapp_bkp/app/controllers/api/v2/webhooks_controller.rb";
 
         // First parse: nodes don't exist
         let res1 = parse_file(ruby_file, &graph);
@@ -447,5 +548,21 @@ mod tests {
         let _ = std::fs::remove_file(db_path);
     }
 
-}
+    #[test]
+    fn test_parse_rust() {
+        let db_path = "test_parse_rust.db";
+        let _ = std::fs::remove_file(db_path);
+        let graph = Graph::open(db_path).unwrap();
 
+        let rs_file = "src/parser.rs";
+
+        let res = parse_file(rs_file, &graph);
+        assert!(res.is_ok(), "Parse rust failed: {:?}", res.err());
+        
+        let summary = res.unwrap();
+        assert!(!summary.imports.is_empty(), "Expected some imports in parser.rs");
+        assert!(!summary.standalone_functions.is_empty(), "Expected some functions in parser.rs");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+}

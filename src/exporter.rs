@@ -11,23 +11,30 @@ pub fn generate_html(db_path: &str, out_path: &str, filter_path: &str) -> Result
 
     let node_query = "MATCH (n) RETURN n.id, labels(n) as label, n.name, n.kind";
     let nodes_res = conn.cypher(node_query).context("Query nodes failed")?;
-    
+
     for row in &nodes_res {
         let id: String = row.get("n.id").unwrap_or_else(|_| "unknown".to_string());
-        
+
         if !filter_path.is_empty() && !id.starts_with(filter_path) {
             continue;
         }
-        
+
         included_nodes.insert(id.clone());
-        
+
         let mut label: String = row.get("label").unwrap_or_else(|_| "Node".to_string());
-        label = label.replace("[\"", "").replace("\"]", "").replace("\"", "");
+        label = label
+            .replace("[\"", "")
+            .replace("\"]", "")
+            .replace("\"", "");
         let name: String = row.get("n.name").unwrap_or_else(|_| id.clone());
         let kind: String = row.get("n.kind").unwrap_or_else(|_| "".to_string());
 
         let display_name = if label == "File" {
-            std::path::Path::new(&id).file_name().unwrap_or_default().to_string_lossy().to_string()
+            std::path::Path::new(&id)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
         } else if !name.is_empty() {
             name
         } else {
@@ -50,19 +57,21 @@ pub fn generate_html(db_path: &str, out_path: &str, filter_path: &str) -> Result
     for row in &edges_res {
         let source: String = row.get("s.id").unwrap_or_default();
         let target: String = row.get("t.id").unwrap_or_default();
-        
-        if !filter_path.is_empty() && (!included_nodes.contains(&source) || !included_nodes.contains(&target)) {
+
+        if !filter_path.is_empty()
+            && (!included_nodes.contains(&source) || !included_nodes.contains(&target))
+        {
             continue;
         }
-        
+
         let mut edge_label: String = row.get("edge_label").unwrap_or_default();
-        
+
         if edge_label.starts_with("REL_") {
             edge_label = edge_label.replace("REL_", "");
         }
 
         if !source.is_empty() && !target.is_empty() {
-            let edge_id = format!("{}::{}::{}", source, edge_label, target);
+            let edge_id = format!("{source}::{edge_label}::{target}");
             elements.push(json!({
                 "data": {
                     "id": edge_id,
@@ -77,8 +86,9 @@ pub fn generate_html(db_path: &str, out_path: &str, filter_path: &str) -> Result
     let json_data = serde_json::to_string(&elements)?;
 
     let mut file = File::create(out_path)?;
-    
-    let html = format!(r#"<!DOCTYPE html>
+
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -135,7 +145,8 @@ pub fn generate_html(db_path: &str, out_path: &str, filter_path: &str) -> Result
         }});
     </script>
 </body>
-</html>"#);
+</html>"#
+    );
 
     file.write_all(html.as_bytes())?;
     Ok(())
