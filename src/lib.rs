@@ -12,6 +12,8 @@ pub fn open_db_connection(path: &str) -> Result<graphqlite::Connection, graphqli
     let _ = conn.execute("PRAGMA journal_mode=WAL;");
     let _ = conn.execute("PRAGMA busy_timeout=5000;");
     let _ = conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(id UNINDEXED, name, description, keywords);");
+    // High-performance index for Cypher property lookups (e.g. MATCH (n {id: '...'}))
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS _gql_node_props_text_val_idx ON node_props_text(key_id, value);");
     Ok(conn)
 }
 

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use graphqlite::{Connection, Graph};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
@@ -40,10 +40,20 @@ fn scan_directory(dir: &Path, files: &mut Vec<PathBuf>) {
             let path = entry.path();
             if path.is_dir() {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name == ".git"
-                        || name == "target"
-                        || name == "node_modules"
-                        || name == "vendor"
+                    let name_lower = name.to_lowercase();
+                    if name_lower == ".git"
+                        || name_lower == ".bundle"
+                        || name_lower == ".yarn"
+                        || name_lower == "target"
+                        || name_lower == "node"
+                        || name_lower == "node_modules"
+                        || name_lower == "vendor"
+                        || name_lower == "tmp"
+                        || name_lower == "log"
+                        || name_lower == "coverage"
+                        || name_lower == "public"
+                        || name_lower == "dist"
+                        || name_lower == "build"
                     {
                         continue;
                     }
@@ -58,6 +68,37 @@ fn scan_directory(dir: &Path, files: &mut Vec<PathBuf>) {
             }
         }
     }
+}
+
+fn delete_file_nodes_opt(
+    sqlite_conn: &rusqlite::Connection,
+    file_path: &str,
+    id_key_id: Option<i64>,
+    file_key_id: Option<i64>,
+) -> Result<()> {
+    if id_key_id.is_none() && file_key_id.is_none() {
+        return Ok(());
+    }
+
+    let mut sql = "DELETE FROM nodes WHERE id IN (".to_string();
+    let mut parts = Vec::new();
+    if let Some(kid) = id_key_id {
+        parts.push(format!("SELECT node_id FROM node_props_text WHERE key_id = {kid} AND value = ?"));
+    }
+    if let Some(fkid) = file_key_id {
+        parts.push(format!("SELECT node_id FROM node_props_text WHERE key_id = {fkid} AND value = ?"));
+    }
+    sql.push_str(&parts.join(" UNION "));
+    sql.push(')');
+
+    let mut stmt = sqlite_conn.prepare(&sql)?;
+    if parts.len() == 2 {
+        stmt.execute((file_path, file_path))?;
+    } else if parts.len() == 1 {
+        stmt.execute((file_path,))?;
+    }
+    
+    Ok(())
 }
 
 fn delete_file_nodes(conn: &Connection, file_path: &str) -> Result<()> {
@@ -75,29 +116,7 @@ fn delete_file_nodes(conn: &Connection, file_path: &str) -> Result<()> {
         |row| row.get(0),
     ).ok();
 
-    if id_key_id.is_none() && file_key_id.is_none() {
-        return Ok(());
-    }
-
-    let mut sql = "DELETE FROM nodes WHERE id IN (".to_string();
-    let mut parts = Vec::new();
-    if let Some(kid) = id_key_id {
-        parts.push(format!("SELECT node_id FROM node_props_text WHERE key_id = {} AND value = ?", kid));
-    }
-    if let Some(fkid) = file_key_id {
-        parts.push(format!("SELECT node_id FROM node_props_text WHERE key_id = {} AND value = ?", fkid));
-    }
-    sql.push_str(&parts.join(" UNION "));
-    sql.push_str(")");
-
-    let mut stmt = sqlite_conn.prepare(&sql)?;
-    if parts.len() == 2 {
-        stmt.execute((file_path, file_path))?;
-    } else if parts.len() == 1 {
-        stmt.execute((file_path,))?;
-    }
-    
-    Ok(())
+    delete_file_nodes_opt(sqlite_conn, file_path, id_key_id, file_key_id)
 }
 
 pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
@@ -108,13 +127,17 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     let mut db_files = std::collections::HashMap::new();
     if let Ok(res) = conn.cypher("MATCH (f:File) RETURN f.id, f.last_modified") {
         for row in &res {
-            if let (Ok(id), Ok(lm)) = (
-                row.get::<String>("f.id"),
-                row.get::<String>("f.last_modified"),
-            ) {
-                if let Ok(lm_val) = lm.parse::<u64>() {
-                    db_files.insert(id, lm_val);
+            let id_res = row.get::<String>("f.id");
+            let lm_val = row.get_value("f.last_modified").and_then(|val| {
+                match val {
+                    graphqlite::Value::Integer(i) => Some(*i as u64),
+                    graphqlite::Value::String(s) => s.parse::<u64>().ok(),
+                    _ => None,
                 }
+            });
+
+            if let (Ok(id), Some(lm_val)) = (id_res, lm_val) {
+                db_files.insert(id, lm_val);
             }
         }
     }
@@ -161,20 +184,100 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
         }
     }
 
-    // 4. Perform deletions using indexed SQL query
+    let sqlite_conn = conn.sqlite_connection();
+    let id_key_id: Option<i64> = sqlite_conn.query_row(
+        "SELECT id FROM property_keys WHERE key = 'id'",
+        [],
+        |row| row.get(0),
+    ).ok();
+    
+    let file_key_id: Option<i64> = sqlite_conn.query_row(
+        "SELECT id FROM property_keys WHERE key = 'file'",
+        [],
+        |row| row.get(0),
+    ).ok();
+
+    // 4. Perform deletions inside a single transaction
+    let _ = sqlite_conn.execute("BEGIN TRANSACTION;", []);
     for path in &files_to_delete {
-        if let Err(e) = delete_file_nodes(&conn, path) {
+        if let Err(e) = delete_file_nodes_opt(sqlite_conn, path, id_key_id, file_key_id) {
             tracing::error!("Failed to delete stale node: {}", e);
         }
     }
+    let _ = sqlite_conn.execute("COMMIT TRANSACTION;", []);
 
     // 5. Perform re-indexing
     let graph = crate::open_db_graph(db_path)?;
+    
+    // First, delete old nodes for files to reindex inside a single transaction
+    let _ = sqlite_conn.execute("BEGIN TRANSACTION;", []);
     for path in &files_to_reindex {
-        let _ = delete_file_nodes(&conn, path);
+        let _ = delete_file_nodes_opt(sqlite_conn, path, id_key_id, file_key_id);
+    }
+    let _ = sqlite_conn.execute("COMMIT TRANSACTION;", []);
 
-        if let Err(e) = crate::parser::parse_file(path, &graph) {
-            tracing::error!("Failed to parse file {}: {}", path, e);
+    // Now, parse all files in memory (CPU bound, extremely fast)
+    let mut all_nodes = Vec::new();
+    let mut all_edges = Vec::new();
+    let mut parsed_count = 0;
+
+    for path in &files_to_reindex {
+        match crate::parser::parse_file_in_memory(path) {
+            Ok((_summary, nodes, edges)) => {
+                all_nodes.extend(nodes);
+                all_edges.extend(edges);
+                parsed_count += 1;
+            }
+            Err(e) => {
+                tracing::error!("Failed to parse file {}: {}", path, e);
+            }
+        }
+    }
+
+    // Now insert all nodes and edges in a single bulk operation
+    if !all_nodes.is_empty() {
+        tracing::info!("Bulk inserting {} nodes and {} edges for {} files...", all_nodes.len(), all_edges.len(), parsed_count);
+        
+        let bulk_nodes_safe: Vec<(
+            String,
+            HashMap<String, crate::models::SafePropertyValue>,
+            String,
+        )> = all_nodes
+            .into_iter()
+            .map(|(id, props, label)| {
+                let safe_props = props
+                    .into_iter()
+                    .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
+                    .collect();
+                (id, safe_props, label)
+            })
+            .collect();
+
+        let bulk_edges_safe: Vec<(
+            String,
+            String,
+            HashMap<String, crate::models::SafePropertyValue>,
+            String,
+        )> = all_edges
+            .into_iter()
+            .map(|(source, target, props, label)| {
+                let safe_props = props
+                    .into_iter()
+                    .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
+                    .collect();
+                (source, target, safe_props, label)
+            })
+            .collect();
+
+        match graph.insert_nodes_bulk(bulk_nodes_safe) {
+            Ok(node_map) => {
+                if let Err(e) = graph.insert_edges_bulk(bulk_edges_safe, &node_map) {
+                    tracing::error!("Bulk insert edges failed during reconciliation: {}", e);
+                }
+            }
+            Err(e) => {
+                tracing::error!("Bulk insert nodes failed during reconciliation: {}", e);
+            }
         }
     }
 
@@ -212,14 +315,23 @@ fn handle_watcher_event(event: Event, conn: &Connection, graph: &Graph) {
         {
             continue;
         }
-        // Skip target, vendor, node_modules, etc.
+        // Skip target, vendor, node, node_modules, tmp, log, coverage, public, etc.
         let has_ignored_dir = path.components().any(|comp| {
             if let Some(s) = comp.as_os_str().to_str() {
                 let s_lower = s.to_lowercase();
                 s_lower == "target"
                     || s_lower == "vendor"
+                    || s_lower == "node"
                     || s_lower == "node_modules"
                     || s_lower == ".git"
+                    || s_lower == ".bundle"
+                    || s_lower == ".yarn"
+                    || s_lower == "tmp"
+                    || s_lower == "log"
+                    || s_lower == "coverage"
+                    || s_lower == "public"
+                    || s_lower == "dist"
+                    || s_lower == "build"
             } else {
                 false
             }

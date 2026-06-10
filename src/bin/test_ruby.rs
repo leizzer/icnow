@@ -15,7 +15,7 @@ fn main() {
     let root_node = tree.root_node();
 
     // Check if there are any ERROR nodes in the tree
-    fn find_errors(node: tree_sitter::Node, source_code: &str, depth: usize) {
+    fn find_errors(node: tree_sitter::Node, source_code: &str) {
         if node.is_error() || node.is_missing() {
             let start = node.start_byte();
             let end = node.end_byte();
@@ -27,12 +27,12 @@ fn main() {
             );
         }
         for i in 0..node.child_count() {
-            find_errors(node.child(i as u32).unwrap(), source_code, depth + 1);
+            find_errors(node.child(i as u32).unwrap(), source_code);
         }
     }
 
     println!("--- AST Errors ---");
-    find_errors(root_node, &source_code, 0);
+    find_errors(root_node, &source_code);
     println!("------------------");
 
     // Let's run the query

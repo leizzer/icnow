@@ -21,6 +21,40 @@ struct ParsedNode {
     kind: String,
     label: String,
     code: String,
+    signature: String,
+    docstring: String,
+}
+
+fn extract_docstring(node: tree_sitter::Node, source_code: &[u8]) -> String {
+    let mut docstring = Vec::new();
+    let mut current = node.prev_named_sibling();
+    
+    while let Some(sibling) = current {
+        let kind = sibling.kind();
+        if kind == "comment" || kind == "line_comment" || kind == "block_comment" {
+            if let Ok(text) = sibling.utf8_text(source_code) {
+                docstring.push(text.trim().to_string());
+            }
+            current = sibling.prev_named_sibling();
+        } else {
+            break;
+        }
+    }
+    docstring.reverse();
+    docstring.join("\n")
+}
+
+fn extract_signature(code: &str, file_path: &str) -> String {
+    if file_path.ends_with(".rb") {
+        code.lines().next().unwrap_or("").trim().to_string()
+    } else {
+        if let Some(idx) = code.find('{') {
+            let sig = &code[..idx];
+            sig.split_whitespace().collect::<Vec<&str>>().join(" ")
+        } else {
+            code.lines().next().unwrap_or("").trim().to_string()
+        }
+    }
 }
 
 fn get_ruby_namespace(node: tree_sitter::Node, source_code: &[u8]) -> Result<String> {
@@ -76,8 +110,8 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
         Ok((
             tree_sitter_ruby::LANGUAGE.into(),
             r#"
-            (method name: (identifier) @name) @function.node
-            (singleton_method name: (identifier) @name) @function.node
+            (method name: _ @name) @function.node
+            (singleton_method name: _ @name) @function.node
             (class name: _ @name) @struct.node
             (module name: _ @name) @struct.node
             (call method: (identifier) @import.method arguments: (argument_list (string (string_content) @name))) @import.node
@@ -165,11 +199,16 @@ fn process_function_node(
     }
 
     let code = func_node.utf8_text(source_code)?.to_string();
+    let signature = extract_signature(&code, file_path);
+    let docstring = extract_docstring(func_node, source_code);
+
     Ok(Some(ParsedNode {
         name,
         kind,
         label,
         code,
+        signature,
+        docstring,
     }))
 }
 
@@ -209,11 +248,16 @@ fn process_struct_node(
     }
 
     let code = struct_node.utf8_text(source_code)?.to_string();
+    let signature = extract_signature(&code, file_path);
+    let docstring = extract_docstring(struct_node, source_code);
+
     Ok(Some(ParsedNode {
         name,
         kind,
         label,
         code,
+        signature,
+        docstring,
     }))
 }
 
@@ -260,6 +304,8 @@ fn process_import_node(
         kind,
         label,
         code,
+        signature: String::new(),
+        docstring: String::new(),
     }))
 }
 
@@ -364,6 +410,57 @@ fn get_file_metadata_properties(file_path: &str) -> HashMap<String, String> {
 }
 
 pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
+    let (summary, bulk_nodes, bulk_edges) = parse_file_in_memory(file_path)?;
+
+    let bulk_nodes_safe: Vec<(
+        String,
+        HashMap<String, crate::models::SafePropertyValue>,
+        String,
+    )> = bulk_nodes
+        .into_iter()
+        .map(|(id, props, label)| {
+            let safe_props = props
+                .into_iter()
+                .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
+                .collect();
+            (id, safe_props, label)
+        })
+        .collect();
+
+    let bulk_edges_safe: Vec<(
+        String,
+        String,
+        HashMap<String, crate::models::SafePropertyValue>,
+        String,
+    )> = bulk_edges
+        .into_iter()
+        .map(|(source, target, props, label)| {
+            let safe_props = props
+                .into_iter()
+                .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
+                .collect();
+            (source, target, safe_props, label)
+        })
+        .collect();
+
+    let node_map = graph
+        .insert_nodes_bulk(bulk_nodes_safe)
+        .map_err(|e| anyhow::anyhow!("Bulk insert nodes failed: {e}"))?;
+    graph
+        .insert_edges_bulk(bulk_edges_safe, &node_map)
+        .map_err(|e| anyhow::anyhow!("Bulk insert edges failed: {e}"))?;
+
+    Ok(summary)
+}
+
+#[allow(clippy::type_complexity)]
+pub fn parse_file_in_memory(
+    file_path: &str,
+) -> Result<(
+    FileSummary,
+    Vec<(String, HashMap<String, String>, String)>,
+    Vec<(String, String, HashMap<String, String>, String)>,
+)> {
     let source_code = fs::read_to_string(file_path)?;
     let mut parser = Parser::new();
 
@@ -432,6 +529,12 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
             if !node.code.is_empty() {
                 props.insert("source_code".to_string(), node.code);
             }
+            if !node.signature.is_empty() {
+                props.insert("signature".to_string(), node.signature);
+            }
+            if !node.docstring.is_empty() {
+                props.insert("docstring".to_string(), node.docstring);
+            }
 
             let id = format!("{file_path}::{}", node.name);
             bulk_nodes.push((id.clone(), props, node.label.clone()));
@@ -483,45 +586,7 @@ pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
         }
     }
 
-    let bulk_nodes_safe: Vec<(
-        String,
-        HashMap<String, crate::models::SafePropertyValue>,
-        String,
-    )> = bulk_nodes
-        .into_iter()
-        .map(|(id, props, label)| {
-            let safe_props = props
-                .into_iter()
-                .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
-                .collect();
-            (id, safe_props, label)
-        })
-        .collect();
-
-    let bulk_edges_safe: Vec<(
-        String,
-        String,
-        HashMap<String, crate::models::SafePropertyValue>,
-        String,
-    )> = bulk_edges
-        .into_iter()
-        .map(|(source, target, props, label)| {
-            let safe_props = props
-                .into_iter()
-                .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
-                .collect();
-            (source, target, safe_props, label)
-        })
-        .collect();
-
-    let node_map = graph
-        .insert_nodes_bulk(bulk_nodes_safe)
-        .map_err(|e| anyhow::anyhow!("Bulk insert nodes failed: {e}"))?;
-    graph
-        .insert_edges_bulk(bulk_edges_safe, &node_map)
-        .map_err(|e| anyhow::anyhow!("Bulk insert edges failed: {e}"))?;
-
-    Ok(summary)
+    Ok((summary, bulk_nodes, bulk_edges))
 }
 
 #[cfg(test)]
@@ -565,4 +630,23 @@ mod tests {
 
         let _ = std::fs::remove_file(db_path);
     }
+
+    #[test]
+    fn test_parse_user_rb() {
+        let db_path = "test_parse_user_rb.db";
+        let _ = std::fs::remove_file(db_path);
+        let graph = Graph::open(db_path).unwrap();
+        let ruby_file = "/Users/cristian/Projects/dgapp_bkp/app/models/user.rb";
+        let res = parse_file(ruby_file, &graph).unwrap();
+        println!("Structures: {:?}", res.structures);
+        println!("Standalone: {:?}", res.standalone_functions);
+        println!("Methods found keys: {:?}", res.methods.keys());
+        if let Some(methods) = res.methods.get("User") {
+            println!("User Methods ({}): {:?}", methods.len(), methods);
+        } else {
+            println!("No methods found for User class");
+        }
+        let _ = std::fs::remove_file(db_path);
+    }
 }
+

@@ -230,15 +230,13 @@ pub fn handle_search_memories(db_path: &str, req: SearchMemoriesRequest) -> Resu
         .map_err(|e| format!("Search query execution failed: {e}"))?;
 
     let mut results = Vec::new();
-    for r_res in rows {
-        if let Ok((id, name, desc, keywords)) = r_res {
-            let short_desc = if desc.len() > 150 {
-                format!("{}...", &desc[..150].replace('\n', " "))
-            } else {
-                desc.replace('\n', " ")
-            };
-            results.push(format!("* [**{name}**]({id}) - `{id}`\n  * Description: {short_desc}\n  * Keywords: `{keywords}`"));
-        }
+    for (id, name, desc, keywords) in rows.flatten() {
+        let short_desc = if desc.len() > 150 {
+            format!("{}...", &desc[..150].replace('\n', " "))
+        } else {
+            desc.replace('\n', " ")
+        };
+        results.push(format!("* [**{name}**]({id}) - `{id}`\n  * Description: {short_desc}\n  * Keywords: `{keywords}`"));
     }
 
     if results.is_empty() {

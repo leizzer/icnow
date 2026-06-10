@@ -369,6 +369,7 @@ struct SymbolInfo {
     refs: Vec<i64>,
 }
 
+#[allow(clippy::type_complexity)]
 fn build_symbols(
     ctx: &LsifContext,
 ) -> (
@@ -455,6 +456,7 @@ fn build_symbols(
     (symbols, range_to_symbol_idx, doc_defs)
 }
 
+#[allow(clippy::type_complexity)]
 fn map_symbols_to_graph(
     ctx: &LsifContext,
     symbols: &[SymbolInfo],

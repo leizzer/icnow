@@ -159,7 +159,7 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Executes a raw SQL SELECT query against the underlying SQLite database tables (nodes, edges, node_props_text) to retrieve metadata, properties, or precise source code fragments. Use this tool when you need to extract the 'source_code' property of a specific function or class node by its ID."
+        description = "Executes a raw SQL SELECT query against the underlying SQLite database tables (nodes, edges, node_props_text) to retrieve metadata, properties, counts, or precise source code fragments. **CRITICAL:** NEVER use PRAGMA queries to discover tables! ALWAYS call `get_graph_schema` FIRST to get the schema. This is the PREFERRED tool for lookups and filtering over Cypher due to 12,000x index speedups."
     )]
     fn query_graph(
         &self,
@@ -182,7 +182,7 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Executes a graph query using Cypher syntax (e.g., MATCH (source)-[rel]->(target) WHERE ...) to discover patterns, links, or cross-file dependencies. This is the preferred tool for high-level semantic lookups and pattern matching in the database."
+        description = "Executes a graph query using Cypher syntax (e.g., MATCH (source)-[rel]->(target) WHERE ...) to discover patterns, links, or cross-file dependencies. **CRITICAL:** DO NOT use this for property lookups, text filtering, or counts (use `query_graph` SQL instead). ONLY use Cypher for multi-hop structural/relationship traversals."
     )]
     fn query_graph_cypher(
         &self,
@@ -285,34 +285,75 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Returns documentation about the graph schema (available node labels, relationship types, and property keys). Useful to understand what data exists in the knowledge graph before writing Cypher queries."
+        description = "Returns documentation about the graph schema (available node labels, relationship types, and property keys). **CRITICAL:** ALWAYS call this tool FIRST to understand the SQLite tables (`nodes`, `edges`, etc.) before writing ANY SQL queries. NEVER use `PRAGMA table_info`."
     )]
     fn get_graph_schema(
         &self,
         Parameters(_req): Parameters<GetGraphSchemaRequest>,
     ) -> Result<String, String> {
         let schema = r#"
-# `icnow` Knowledge Graph Schema
+# `icnow` Knowledge Graph (SQLite Schema)
 
-## Node Labels
-- `File`: Represents a source file (e.g. `src/main.rs`). Property `id` is the absolute path.
-- `Class` / `Module` / `Struct` / `Interface`: Represent object-oriented and structural containers.
-- `Method` / `Function`: Represent callable logic blocks.
-- `Import`: Represents a module or package import.
-- `Unresolved`: Represents a symbol that was called but its definition couldn't be accurately statically resolved.
+**CRITICAL PERFORMANCE RULE:** To maximize performance and avoid slow Cypher translations, prioritize writing **raw SQL queries** using the `query_graph` tool when answering complex questions. **DO NOT** use PRAGMA queries to discover the schema—it is provided below.
 
-## Edge/Relationship Labels
-- `CONTAINS`: Structural containment (e.g. `File` -[:CONTAINS]-> `Class`, `File` -[:CONTAINS]-> `Function`).
-- `HAS_METHOD`: Class-to-method containment (e.g. `Class` -[:HAS_METHOD]-> `Method`).
-- `CALLS`: Function invocation (e.g. `Function` -[:CALLS]-> `Function`).
-- `IMPORTS`: Cross-file dependency tracking (e.g. `File` -[:IMPORTS]-> `File`).
+## Database Schema
 
-## Common Properties
-- `id`: The globally unique identifier for nodes/edges. For structural nodes, it's `filepath::namespace::name`.
-- `name`: The local name of the symbol.
-- `file`: The absolute path of the file containing this node.
-- `source_code`: The raw text implementation of the node (available for Classes, Methods, Functions).
-- `last_modified`: Epoch timestamp (for `File` nodes).
+### `nodes`
+- `id`: INTEGER PRIMARY KEY
+
+### `edges`
+- `source_id`: INTEGER (Foreign key to `nodes.id`)
+- `target_id`: INTEGER (Foreign key to `nodes.id`)
+- `type`: TEXT (Relationship type: e.g., 'HAS_METHOD', 'REL_CONTAINS', 'CALLS', 'IMPORTS')
+
+### `node_labels`
+- `node_id`: INTEGER (Foreign key to `nodes.id`)
+- `label`: TEXT (Node type: e.g., 'Class', 'Module', 'File', 'Method', 'Function', 'Struct')
+
+### `property_keys`
+- `id`: INTEGER PRIMARY KEY
+- `key`: TEXT (Property name: e.g., 'id' (absolute path/identifier), 'name', 'source_code')
+
+### `node_props_text`
+- `node_id`: INTEGER (Foreign key to `nodes.id`)
+- `key_id`: INTEGER (Foreign key to `property_keys.id`)
+- `value`: TEXT (The actual property value)
+
+## Query Patterns and Best Practices
+
+To fetch properties efficiently, join `node_props_text` and `property_keys`. 
+**DO NOT** use string manipulation functions (`toLower`, `replace`) on indexed columns (`value`, `label`, `type`), as this forces full table scans. Use standard `LIKE` or `=` operations.
+
+### Example: Finding properties of a Node (e.g. Class 'User')
+```sql
+SELECT p_id.value AS node_identifier, p_name.value AS name, l.label
+FROM nodes n
+JOIN node_labels l ON n.id = l.node_id
+JOIN node_props_text p_id ON n.id = p_id.node_id 
+  AND p_id.key_id = (SELECT id FROM property_keys WHERE key = 'id')
+LEFT JOIN node_props_text p_name ON n.id = p_name.node_id 
+  AND p_name.key_id = (SELECT id FROM property_keys WHERE key = 'name')
+WHERE p_name.value = 'User' AND l.label = 'Class';
+```
+
+### Example: Counting Methods of a Specific Class ('User')
+```sql
+SELECT COUNT(e.target_id)
+FROM edges e
+JOIN node_props_text p_source ON e.source_id = p_source.node_id 
+  AND p_source.key_id = (SELECT id FROM property_keys WHERE key = 'id')
+WHERE e.type = 'HAS_METHOD' 
+  AND p_source.value LIKE '%::User';
+```
+
+### Example: Finding all Files
+```sql
+SELECT p.value AS FilePath 
+FROM node_labels l
+JOIN node_props_text p ON l.node_id = p.node_id 
+  AND p.key_id = (SELECT id FROM property_keys WHERE key = 'id')
+WHERE l.label = 'File';
+```
         "#;
         Ok(schema.trim().to_string())
     }
