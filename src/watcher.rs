@@ -1,5 +1,4 @@
 use anyhow::Result;
-use graphqlite::{Connection, Graph};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -7,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::sync::{LazyLock, Mutex};
 use std::time::UNIX_EPOCH;
+use lbug::{Connection, Value};
 
 static WATCHED_WORKSPACES: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -41,20 +41,7 @@ fn scan_directory(dir: &Path, files: &mut Vec<PathBuf>) {
             if path.is_dir() {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     let name_lower = name.to_lowercase();
-                    if name_lower == ".git"
-                        || name_lower == ".bundle"
-                        || name_lower == ".yarn"
-                        || name_lower == "target"
-                        || name_lower == "node"
-                        || name_lower == "node_modules"
-                        || name_lower == "vendor"
-                        || name_lower == "tmp"
-                        || name_lower == "log"
-                        || name_lower == "coverage"
-                        || name_lower == "public"
-                        || name_lower == "dist"
-                        || name_lower == "build"
-                    {
+                    if matches!(name_lower.as_str(), ".git" | ".bundle" | ".yarn" | "target" | "node" | "node_modules" | "vendor" | "tmp" | "log" | "coverage" | "public" | "dist" | "build") {
                         continue;
                     }
                 }
@@ -70,84 +57,51 @@ fn scan_directory(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn delete_file_nodes_opt(
-    sqlite_conn: &rusqlite::Connection,
-    file_path: &str,
-    id_key_id: Option<i64>,
-    file_key_id: Option<i64>,
-) -> Result<()> {
-    if id_key_id.is_none() && file_key_id.is_none() {
-        return Ok(());
-    }
-
-    let mut sql = "DELETE FROM nodes WHERE id IN (".to_string();
-    let mut parts = Vec::new();
-    if let Some(kid) = id_key_id {
-        parts.push(format!("SELECT node_id FROM node_props_text WHERE key_id = {kid} AND value = ?"));
-    }
-    if let Some(fkid) = file_key_id {
-        parts.push(format!("SELECT node_id FROM node_props_text WHERE key_id = {fkid} AND value = ?"));
-    }
-    sql.push_str(&parts.join(" UNION "));
-    sql.push(')');
-
-    let mut stmt = sqlite_conn.prepare(&sql)?;
-    if parts.len() == 2 {
-        stmt.execute((file_path, file_path))?;
-    } else if parts.len() == 1 {
-        stmt.execute((file_path,))?;
-    }
-    
+fn delete_file_nodes(conn: &Connection, file_path: &str) -> Result<()> {
+    let path_esc = file_path.replace("'", "''");
+    let query_file = format!("MATCH (f:File {{id: '{}'}}) DETACH DELETE f", path_esc);
+    let query_sym = format!("MATCH (s:Symbol) WHERE s.id STARTS WITH '{}::' DETACH DELETE s", path_esc);
+    let _ = conn.query(&query_file);
+    let _ = conn.query(&query_sym);
     Ok(())
 }
 
-fn delete_file_nodes(conn: &Connection, file_path: &str) -> Result<()> {
-    let sqlite_conn = conn.sqlite_connection();
-    
-    let id_key_id: Option<i64> = sqlite_conn.query_row(
-        "SELECT id FROM property_keys WHERE key = 'id'",
-        [],
-        |row| row.get(0),
-    ).ok();
-    
-    let file_key_id: Option<i64> = sqlite_conn.query_row(
-        "SELECT id FROM property_keys WHERE key = 'file'",
-        [],
-        |row| row.get(0),
-    ).ok();
+fn get_val_str(row: &[Value], cols: &[String], name: &str) -> Option<String> {
+    cols.iter().position(|c| c == name).and_then(|idx| {
+        if let Value::String(s) = &row[idx] { Some(s.clone()) } else { None }
+    })
+}
 
-    delete_file_nodes_opt(sqlite_conn, file_path, id_key_id, file_key_id)
+fn get_val_int(row: &[Value], cols: &[String], name: &str) -> Option<i64> {
+    cols.iter().position(|c| c == name).and_then(|idx| {
+        match &row[idx] {
+            Value::Int64(i) => Some(*i),
+            Value::Int32(i) => Some(*i as i64),
+            Value::String(s) => s.parse::<i64>().ok(),
+            _ => None,
+        }
+    })
 }
 
 pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     tracing::info!("Reconciling workspace: {:?}", root_dir);
-    let conn = crate::open_db_connection(db_path)?;
+    let conn = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e))?;
 
-    // 1. Get current DB files using Cypher
-    let mut db_files = std::collections::HashMap::new();
-    if let Ok(res) = conn.cypher("MATCH (f:File) RETURN f.id, f.last_modified") {
-        for row in &res {
-            let id_res = row.get::<String>("f.id");
-            let lm_val = row.get_value("f.last_modified").and_then(|val| {
-                match val {
-                    graphqlite::Value::Integer(i) => Some(*i as u64),
-                    graphqlite::Value::String(s) => s.parse::<u64>().ok(),
-                    _ => None,
-                }
-            });
-
-            if let (Ok(id), Some(lm_val)) = (id_res, lm_val) {
-                db_files.insert(id, lm_val);
+    let mut db_files = HashMap::new();
+    if let Ok(mut res) = conn.query("MATCH (f:File) RETURN f.id, f.last_modified") {
+        let cols = res.get_column_names();
+        for row in res.by_ref() {
+            if let (Some(id), Some(lm)) = (get_val_str(&row, &cols, "f.id"), get_val_int(&row, &cols, "f.last_modified")) {
+                db_files.insert(id, lm as u64);
             }
         }
     }
 
-    // 2. Scan disk
     let mut disk_files = Vec::new();
     scan_directory(root_dir, &mut disk_files);
 
     let mut files_to_reindex = Vec::new();
-    let mut current_disk_paths = std::collections::HashSet::new();
+    let mut current_disk_paths = HashSet::new();
 
     for file_path in disk_files {
         if let Ok(canonical) = fs::canonicalize(&file_path) {
@@ -175,7 +129,6 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
         }
     }
 
-    // 3. Find deleted files
     let mut files_to_delete = Vec::new();
     for db_path in db_files.keys() {
         if !current_disk_paths.contains(db_path) {
@@ -184,100 +137,14 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
         }
     }
 
-    let sqlite_conn = conn.sqlite_connection();
-    let id_key_id: Option<i64> = sqlite_conn.query_row(
-        "SELECT id FROM property_keys WHERE key = 'id'",
-        [],
-        |row| row.get(0),
-    ).ok();
-    
-    let file_key_id: Option<i64> = sqlite_conn.query_row(
-        "SELECT id FROM property_keys WHERE key = 'file'",
-        [],
-        |row| row.get(0),
-    ).ok();
-
-    // 4. Perform deletions inside a single transaction
-    let _ = sqlite_conn.execute("BEGIN TRANSACTION;", []);
     for path in &files_to_delete {
-        if let Err(e) = delete_file_nodes_opt(sqlite_conn, path, id_key_id, file_key_id) {
-            tracing::error!("Failed to delete stale node: {}", e);
-        }
+        let _ = delete_file_nodes(&conn, path);
     }
-    let _ = sqlite_conn.execute("COMMIT TRANSACTION;", []);
-
-    // 5. Perform re-indexing
-    let graph = crate::open_db_graph(db_path)?;
-    
-    // First, delete old nodes for files to reindex inside a single transaction
-    let _ = sqlite_conn.execute("BEGIN TRANSACTION;", []);
-    for path in &files_to_reindex {
-        let _ = delete_file_nodes_opt(sqlite_conn, path, id_key_id, file_key_id);
-    }
-    let _ = sqlite_conn.execute("COMMIT TRANSACTION;", []);
-
-    // Now, parse all files in memory (CPU bound, extremely fast)
-    let mut all_nodes = Vec::new();
-    let mut all_edges = Vec::new();
-    let mut parsed_count = 0;
 
     for path in &files_to_reindex {
-        match crate::parser::parse_file_in_memory(path) {
-            Ok((_summary, nodes, edges)) => {
-                all_nodes.extend(nodes);
-                all_edges.extend(edges);
-                parsed_count += 1;
-            }
-            Err(e) => {
-                tracing::error!("Failed to parse file {}: {}", path, e);
-            }
-        }
-    }
-
-    // Now insert all nodes and edges in a single bulk operation
-    if !all_nodes.is_empty() {
-        tracing::info!("Bulk inserting {} nodes and {} edges for {} files...", all_nodes.len(), all_edges.len(), parsed_count);
-        
-        let bulk_nodes_safe: Vec<(
-            String,
-            HashMap<String, crate::models::SafePropertyValue>,
-            String,
-        )> = all_nodes
-            .into_iter()
-            .map(|(id, props, label)| {
-                let safe_props = props
-                    .into_iter()
-                    .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
-                    .collect();
-                (id, safe_props, label)
-            })
-            .collect();
-
-        let bulk_edges_safe: Vec<(
-            String,
-            String,
-            HashMap<String, crate::models::SafePropertyValue>,
-            String,
-        )> = all_edges
-            .into_iter()
-            .map(|(source, target, props, label)| {
-                let safe_props = props
-                    .into_iter()
-                    .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
-                    .collect();
-                (source, target, safe_props, label)
-            })
-            .collect();
-
-        match graph.insert_nodes_bulk(bulk_nodes_safe) {
-            Ok(node_map) => {
-                if let Err(e) = graph.insert_edges_bulk(bulk_edges_safe, &node_map) {
-                    tracing::error!("Bulk insert edges failed during reconciliation: {}", e);
-                }
-            }
-            Err(e) => {
-                tracing::error!("Bulk insert nodes failed during reconciliation: {}", e);
-            }
+        let _ = delete_file_nodes(&conn, path);
+        if let Err(e) = crate::parser::parse_file(path, &conn) {
+            tracing::error!("Failed to parse file {}: {}", path, e);
         }
     }
 
@@ -287,7 +154,6 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
         files_to_reindex.len()
     );
 
-    // Trigger cross-file import reconciliation
     let db_path_clone = db_path.to_string();
     std::thread::spawn(move || {
         if let Err(e) = crate::reconciler::reconcile_imports(&db_path_clone) {
@@ -298,7 +164,7 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn handle_watcher_event(event: Event, conn: &Connection, graph: &Graph) {
+fn handle_watcher_event(event: Event, conn: &Connection) {
     for path in event.paths {
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             if ext != "rs" && ext != "rb" && ext != "ts" && ext != "tsx" {
@@ -308,30 +174,14 @@ fn handle_watcher_event(event: Event, conn: &Connection, graph: &Graph) {
             continue;
         }
 
-        // Skip hidden paths
-        if path
-            .components()
-            .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
-        {
+        if path.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.')) {
             continue;
         }
-        // Skip target, vendor, node, node_modules, tmp, log, coverage, public, etc.
+
         let has_ignored_dir = path.components().any(|comp| {
             if let Some(s) = comp.as_os_str().to_str() {
                 let s_lower = s.to_lowercase();
-                s_lower == "target"
-                    || s_lower == "vendor"
-                    || s_lower == "node"
-                    || s_lower == "node_modules"
-                    || s_lower == ".git"
-                    || s_lower == ".bundle"
-                    || s_lower == ".yarn"
-                    || s_lower == "tmp"
-                    || s_lower == "log"
-                    || s_lower == "coverage"
-                    || s_lower == "public"
-                    || s_lower == "dist"
-                    || s_lower == "build"
+                matches!(s_lower.as_str(), "target" | "vendor" | "node" | "node_modules" | ".git" | ".bundle" | ".yarn" | "tmp" | "log" | "coverage" | "public" | "dist" | "build")
             } else {
                 false
             }
@@ -340,18 +190,14 @@ fn handle_watcher_event(event: Event, conn: &Connection, graph: &Graph) {
             continue;
         }
 
-        let abs_path = match fs::canonicalize(&path) {
-            Ok(p) => p,
-            Err(_) => path,
-        };
+        let abs_path = fs::canonicalize(&path).unwrap_or(path);
         let path_str = abs_path.to_string_lossy().to_string();
-
         let exists = abs_path.exists();
+        
         if exists && abs_path.is_file() {
             tracing::info!("Watcher: reindexing {}", path_str);
             let _ = delete_file_nodes(conn, &path_str);
-
-            if let Err(e) = crate::parser::parse_file(&path_str, graph) {
+            if let Err(e) = crate::parser::parse_file(&path_str, conn) {
                 tracing::error!("Failed to parse file {}: {}", path_str, e);
             }
         } else if !exists {
@@ -372,18 +218,11 @@ fn is_process_alive(pid: u32) -> bool {
 #[cfg(not(unix))]
 fn is_process_alive(pid: u32) -> bool {
     if cfg!(windows) {
-        if let Ok(output) = std::process::Command::new("tasklist")
-            .args(&["/FI", &format!("PID eq {}", pid)])
-            .output()
-        {
+        if let Ok(output) = std::process::Command::new("tasklist").args(&["/FI", &format!("PID eq {}", pid)]).output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             stdout.contains(&pid.to_string())
-        } else {
-            false
-        }
-    } else {
-        false
-    }
+        } else { false }
+    } else { false }
 }
 
 pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
@@ -402,32 +241,24 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
             }
         };
 
-        let _ = conn.execute("CREATE TABLE IF NOT EXISTS icnow_watcher_lock (id INTEGER PRIMARY KEY, pid INTEGER, last_heartbeat INTEGER);");
+        let _ = conn.query("CREATE NODE TABLE IF NOT EXISTS WatcherLock (id INT64, pid INT64, last_heartbeat INT64, PRIMARY KEY(id))");
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
 
-        let mut current_lock: Option<(u32, u64)> = None;
-        if let Ok(res) = conn.sqlite_connection().query_row(
-            "SELECT pid, last_heartbeat FROM icnow_watcher_lock WHERE id = 1",
-            [],
-            |row| {
-                let lock_pid: i32 = row.get(0)?;
-                let heartbeat: i64 = row.get(1)?;
-                Ok((lock_pid as u32, heartbeat as u64))
-            },
-        ) {
-            current_lock = Some(res);
+        let mut current_lock: Option<(u32, i64)> = None;
+        if let Ok(mut res) = conn.query("MATCH (l:WatcherLock {id: 1}) RETURN l.pid, l.last_heartbeat") {
+            let cols = res.get_column_names();
+            if let Some(row) = res.by_ref().next() {
+                if let (Some(l_pid), Some(l_hb)) = (get_val_int(&row, &cols, "l.pid"), get_val_int(&row, &cols, "l.last_heartbeat")) {
+                    current_lock = Some((l_pid as u32, l_hb));
+                }
+            }
         }
 
         let can_acquire = match current_lock {
             None => true,
             Some((lock_pid, heartbeat)) => {
-                if lock_pid == pid {
-                    true
-                } else {
+                if lock_pid == pid { true } else {
                     let is_stale = now - heartbeat >= 15;
                     let is_dead = !is_process_alive(lock_pid);
                     is_stale || is_dead
@@ -436,22 +267,12 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
         };
 
         if can_acquire {
-            let res = if !is_active_watcher {
-                conn.execute(&format!(
-                    "INSERT OR REPLACE INTO icnow_watcher_lock (id, pid, last_heartbeat) VALUES (1, {pid}, {now})"
-                ))
-            } else {
-                conn.execute(&format!(
-                    "UPDATE icnow_watcher_lock SET last_heartbeat = {now} WHERE pid = {pid}"
-                ))
-            };
+            let query = format!("MERGE (l:WatcherLock {{id: 1}}) ON MATCH SET l.pid = {}, l.last_heartbeat = {} ON CREATE SET l.pid = {}, l.last_heartbeat = {}", pid, now, pid, now);
+            let res = conn.query(&query);
 
             if res.is_ok() {
                 if !is_active_watcher {
-                    tracing::info!(
-                        "Acquired watcher lock for PID {}. Activating file watcher.",
-                        pid
-                    );
+                    tracing::info!("Acquired watcher lock for PID {}. Activating file watcher.", pid);
                     is_active_watcher = true;
 
                     if let Err(e) = reconcile_workspace(&root_dir, &db_path) {
@@ -478,13 +299,6 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
 
                     let db_path_clone = db_path.clone();
                     std::thread::spawn(move || {
-                        let graph = match crate::open_db_graph(&db_path_clone) {
-                            Ok(g) => g,
-                            Err(e) => {
-                                tracing::error!("Watcher thread failed to open graph: {}", e);
-                                return;
-                            }
-                        };
                         let conn = match crate::open_db_connection(&db_path_clone) {
                             Ok(c) => c,
                             Err(e) => {
@@ -495,32 +309,22 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
                         tracing::info!("Live file watcher active for PID {}.", std::process::id());
                         for res in rx {
                             match res {
-                                Ok(event) => {
-                                    handle_watcher_event(event, &conn, &graph);
-                                }
-                                Err(e) => {
-                                    tracing::error!("Watcher event error: {}", e);
-                                }
+                                Ok(event) => handle_watcher_event(event, &conn),
+                                Err(e) => tracing::error!("Watcher event error: {}", e),
                             }
                         }
                         tracing::info!("Watcher loop thread exiting cleanly.");
                     });
                 }
             } else if !is_active_watcher {
-                tracing::warn!(
-                    "Failed to initially acquire watcher lock in DB: {:?}",
-                    res.err()
-                );
+                tracing::warn!("Failed to initially acquire watcher lock in DB: {:?}", res.err());
             } else {
-                tracing::warn!(
-                    "Failed to update watcher heartbeat in DB (transient lock?): {:?}",
-                    res.err()
-                );
+                tracing::warn!("Failed to update watcher heartbeat in DB (transient lock?): {:?}", res.err());
             }
         } else if is_active_watcher {
             tracing::warn!("Lock stolen by another process. Stepping down as active watcher.");
             is_active_watcher = false;
-            _active_watcher = None; // Drops RecommendedWatcher, stopping the watcher thread cleanly
+            _active_watcher = None; 
         }
 
         std::thread::sleep(std::time::Duration::from_secs(5));

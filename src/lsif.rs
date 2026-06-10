@@ -704,49 +704,53 @@ pub fn parse_and_import_lsif(
     ctx.parse_lines(reader);
 
     let (symbols, _range_map, doc_defs) = build_symbols(&ctx);
-    let (bulk_nodes, bulk_edges) = map_symbols_to_graph(&ctx, &symbols, project_root, &doc_defs);
+    let (all_nodes, all_edges) = map_symbols_to_graph(&ctx, &symbols, project_root, &doc_defs);
 
-    let nodes_count = bulk_nodes.len();
-    let edges_count = bulk_edges.len();
+    let nodes_count = all_nodes.len();
+    let edges_count = all_edges.len();
 
-    let graph = crate::open_db_graph(db_path)?;
-    let bulk_nodes_safe: Vec<(
-        String,
-        HashMap<String, crate::models::SafePropertyValue>,
-        String,
-    )> = bulk_nodes
-        .into_iter()
-        .map(|(id, props, label)| {
-            let safe_props = props
-                .into_iter()
-                .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
-                .collect();
-            (id, safe_props, label)
-        })
-        .collect();
+    let conn = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e))?;
 
-    let bulk_edges_safe: Vec<(
-        String,
-        String,
-        HashMap<String, crate::models::SafePropertyValue>,
-        String,
-    )> = bulk_edges
-        .into_iter()
-        .map(|(source, target, props, label)| {
-            let safe_props = props
-                .into_iter()
-                .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
-                .collect();
-            (source, target, safe_props, label)
-        })
-        .collect();
+    if !all_nodes.is_empty() {
+        tracing::info!(
+            "Bulk inserting {} nodes and {} edges...",
+            all_nodes.len(),
+            all_edges.len()
+        );
 
-    let node_map = graph
-        .insert_nodes_bulk(bulk_nodes_safe)
-        .map_err(|e| anyhow::anyhow!("Bulk insert nodes failed: {e}"))?;
-    graph
-        .insert_edges_bulk(bulk_edges_safe, &node_map)
-        .map_err(|e| anyhow::anyhow!("Bulk insert edges failed: {e}"))?;
+        for (id, props, label) in all_nodes {
+            let mut safe_props = HashMap::new();
+            let mut kind = String::new();
+            for (k, v) in props {
+                if k == "kind" {
+                    kind = v.clone();
+                }
+                safe_props.insert(k, v);
+            }
+            let node = crate::models::Node {
+                id: id.clone(),
+                label,
+                kind,
+                properties: safe_props,
+            };
+            let _ = node.save(&conn);
+        }
+
+        for (source, target, props, label) in all_edges {
+            let mut safe_props = HashMap::new();
+            for (k, v) in props {
+                safe_props.insert(k, v);
+            }
+            let edge = crate::models::Edge {
+                id: format!("{}::{}::{}", source, label, target),
+                source,
+                target,
+                label,
+                properties: safe_props,
+            };
+            let _ = edge.save(&conn);
+        }
+    }
 
     tracing::info!(
         "LSIF Import completed. Nodes: {}, Edges: {}",

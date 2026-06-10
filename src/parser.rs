@@ -1,5 +1,5 @@
 use anyhow::Result;
-use graphqlite::Graph;
+// Removed graphqlite
 use std::collections::HashMap;
 use std::fs;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
@@ -409,46 +409,49 @@ fn get_file_metadata_properties(file_path: &str) -> HashMap<String, String> {
     file_props
 }
 
-pub fn parse_file(file_path: &str, graph: &Graph) -> Result<FileSummary> {
+pub fn parse_file(file_path: &str, conn: &lbug::Connection) -> Result<FileSummary> {
     let (summary, bulk_nodes, bulk_edges) = parse_file_in_memory(file_path)?;
 
-    let bulk_nodes_safe: Vec<(
-        String,
-        HashMap<String, crate::models::SafePropertyValue>,
-        String,
-    )> = bulk_nodes
-        .into_iter()
-        .map(|(id, props, label)| {
-            let safe_props = props
-                .into_iter()
-                .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
-                .collect();
-            (id, safe_props, label)
-        })
-        .collect();
+    for (id, props, label) in bulk_nodes {
+        let table_name = if label == "File" { "File" } else { "Symbol" };
+        let mut query = format!("MERGE (n:{} {{id: '{}'}})", table_name, id.replace("'", "''"));
+        
+        let mut sets = vec![];
+        if table_name == "Symbol" {
+            sets.push(format!("n.kind = '{}'", label.replace("'", "''")));
+        }
+        for (k, v) in props {
+            if k != "id" {
+                sets.push(format!("n.{} = '{}'", k, v.replace("'", "''")));
+            }
+        }
+        if !sets.is_empty() {
+            query.push_str(" ON MATCH SET ");
+            query.push_str(&sets.join(", "));
+            query.push_str(" ON CREATE SET ");
+            query.push_str(&sets.join(", "));
+        }
+        
+        conn.query(&query).map_err(|e| anyhow::anyhow!("Merge node failed: {}", e))?;
+    }
 
-    let bulk_edges_safe: Vec<(
-        String,
-        String,
-        HashMap<String, crate::models::SafePropertyValue>,
-        String,
-    )> = bulk_edges
-        .into_iter()
-        .map(|(source, target, props, label)| {
-            let safe_props = props
-                .into_iter()
-                .map(|(k, v)| (k, crate::models::SafePropertyValue(v)))
-                .collect();
-            (source, target, safe_props, label)
-        })
-        .collect();
+    for (source, target, props, label) in bulk_edges {
+        // Determine source table
+        let src_table = if source.starts_with('/') && !source.contains("::") { "File" } else { "Symbol" };
+        let tgt_table = if target.starts_with('/') && !target.contains("::") { "File" } else { "Symbol" };
+        
+        let rel_table = match label.as_str() {
+            "REL_CONTAINS" => "REL_CONTAINS",
+            "HAS_METHOD" => "HAS_METHOD",
+            "CALLS" | _ => "CALLS",
+        };
 
-    let node_map = graph
-        .insert_nodes_bulk(bulk_nodes_safe)
-        .map_err(|e| anyhow::anyhow!("Bulk insert nodes failed: {e}"))?;
-    graph
-        .insert_edges_bulk(bulk_edges_safe, &node_map)
-        .map_err(|e| anyhow::anyhow!("Bulk insert edges failed: {e}"))?;
+        let query = format!(
+            "MATCH (s:{} {{id: '{}'}}), (t:{} {{id: '{}'}}) MERGE (s)-[:{}]->(t)",
+            src_table, source.replace("'", "''"), tgt_table, target.replace("'", "''"), rel_table
+        );
+        conn.query(&query).map_err(|e| anyhow::anyhow!("Merge edge failed: {}", e))?;
+    }
 
     Ok(summary)
 }

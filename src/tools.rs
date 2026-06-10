@@ -439,8 +439,8 @@ WHERE l.label = 'File';
     }
 }
 
-pub(crate) fn format_cypher_result(res: graphqlite::CypherResult) -> Result<String, String> {
-    let cols = res.columns();
+pub(crate) fn format_cypher_result(res: &mut lbug::QueryResult) -> Result<String, String> {
+    let cols = res.get_column_names();
     if cols.is_empty() {
         return Ok("No columns returned.".to_string());
     }
@@ -451,19 +451,17 @@ pub(crate) fn format_cypher_result(res: graphqlite::CypherResult) -> Result<Stri
         cols.iter().map(|_| "---").collect::<Vec<_>>().join(" | ")
     ));
 
-    for row in &res {
+    for row in res.by_ref() {
         let mut row_vals = Vec::new();
-        for col in cols {
-            let val_str = if let Ok(s) = row.get::<String>(col) {
-                s
-            } else if let Ok(i) = row.get::<i64>(col) {
-                i.to_string()
-            } else if let Ok(f) = row.get::<f64>(col) {
-                f.to_string()
-            } else if let Ok(b) = row.get::<bool>(col) {
-                b.to_string()
-            } else {
-                "null".to_string()
+        for (i, _col) in cols.iter().enumerate() {
+            let val_str = match &row[i] {
+                lbug::Value::String(s) => s.clone(),
+                lbug::Value::Int64(i) => i.to_string(),
+                lbug::Value::Int32(i) => i.to_string(),
+                lbug::Value::Double(f) => f.to_string(),
+                lbug::Value::Bool(b) => b.to_string(),
+                lbug::Value::Null(_) => "null".to_string(),
+                _ => "?".to_string(),
             };
             row_vals.push(val_str);
         }

@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use lbug::Connection;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Node {
@@ -9,7 +10,7 @@ pub struct Node {
     )]
     pub id: String,
     #[schemars(
-        description = "The high-level category of the node, e.g., 'File', 'Class', 'Module', 'Struct', 'Interface', 'Function', 'Method', 'Import'"
+        description = "The high-level category of the node, e.g., 'File', 'Class', 'Module', 'Struct', 'Interface', 'Function', 'Method', 'Import', 'Memory'"
     )]
     pub label: String,
     #[schemars(
@@ -23,17 +24,33 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn save(&self, graph: &graphqlite::Graph) -> anyhow::Result<()> {
-        let mut props: HashMap<String, SafePropertyValue> = self
-            .properties
-            .iter()
-            .map(|(k, v)| (k.clone(), SafePropertyValue(v.clone())))
-            .collect();
-        props.insert("kind".to_string(), SafePropertyValue(self.kind.clone()));
-
-        graph
-            .upsert_node(&self.id, props, &self.label)
-            .map_err(|e| anyhow::anyhow!("Failed to save node: {e}"))
+    pub fn save(&self, conn: &Connection) -> anyhow::Result<()> {
+        let table_name = match self.label.as_str() {
+            "File" => "File",
+            "Memory" => "Memory",
+            _ => "Symbol",
+        };
+        
+        let mut query = format!("MERGE (n:{} {{id: '{}'}})", table_name, self.id.replace("'", "''"));
+        let mut sets = vec![];
+        if table_name == "Symbol" {
+            sets.push(format!("n.kind = '{}'", self.kind.replace("'", "''")));
+        }
+        for (k, v) in &self.properties {
+            if k != "id" {
+                sets.push(format!("n.{} = '{}'", k, v.replace("'", "''")));
+            }
+        }
+        
+        if !sets.is_empty() {
+            query.push_str(" ON MATCH SET ");
+            query.push_str(&sets.join(", "));
+            query.push_str(" ON CREATE SET ");
+            query.push_str(&sets.join(", "));
+        }
+        
+        conn.query(&query).map_err(|e| anyhow::anyhow!("Failed to save node: {e}"))?;
+        Ok(())
     }
 }
 
@@ -48,7 +65,7 @@ pub struct Edge {
     #[schemars(description = "The globally unique string ID of the target node")]
     pub target: String,
     #[schemars(
-        description = "The relationship label, e.g., 'CONTAINS' (file contains element), 'HAS_METHOD', 'CALLS' (method calls method), 'IMPORTS'"
+        description = "The relationship label, e.g., 'CONTAINS' (file contains element), 'HAS_METHOD', 'CALLS' (method calls method), 'IMPORTS', 'LINKS_TO'"
     )]
     pub label: String,
     #[schemars(
@@ -58,76 +75,25 @@ pub struct Edge {
 }
 
 impl Edge {
-    pub fn save(&self, graph: &graphqlite::Graph) -> anyhow::Result<()> {
-        let safe_props: HashMap<String, SafePropertyValue> = self
-            .properties
-            .iter()
-            .map(|(k, v)| (k.clone(), SafePropertyValue(v.clone())))
-            .collect();
-        graph
-            .upsert_edge(&self.source, &self.target, safe_props, &self.label)
-            .map_err(|e| anyhow::anyhow!("Failed to save edge: {e}"))
+    pub fn save(&self, conn: &Connection) -> anyhow::Result<()> {
+        let rel_table = match self.label.as_str() {
+            "REL_CONTAINS" | "CONTAINS" => "REL_CONTAINS",
+            "HAS_METHOD" => "HAS_METHOD",
+            "CALLS" => "CALLS",
+            "IMPORTS" => "IMPORTS",
+            "LINKS_TO" => "LINKS_TO",
+            _ => "CALLS",
+        };
+
+        let query = format!(
+            "MATCH (s {{id: '{}'}}), (t {{id: '{}'}}) MERGE (s)-[:{}]->(t)",
+            self.source.replace("'", "''"), self.target.replace("'", "''"), rel_table
+        );
+
+        conn.query(&query).map_err(|e| anyhow::anyhow!("Failed to save edge: {e}"))?;
+        Ok(())
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SafePropertyValue(pub String);
-
-impl From<SafePropertyValue> for graphqlite::PropertyValue {
-    fn from(wrapper: SafePropertyValue) -> Self {
-        let s = wrapper.0;
-        let s_lower = s.to_lowercase();
-        if s_lower == "nan"
-            || s_lower == "infinity"
-            || s_lower == "inf"
-            || s_lower == "-infinity"
-            || s_lower == "-inf"
-        {
-            return graphqlite::PropertyValue::Text(s);
-        }
-        graphqlite::PropertyValue::from(s)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use graphqlite::PropertyValue;
-
-    #[test]
-    fn test_safe_property_value() {
-        // Special float string values should map to Text
-        match PropertyValue::from(SafePropertyValue("NaN".to_string())) {
-            PropertyValue::Text(val) => assert_eq!(val, "NaN"),
-            other => panic!("Expected PropertyValue::Text for NaN, got {other:?}"),
-        }
-        match PropertyValue::from(SafePropertyValue("Infinity".to_string())) {
-            PropertyValue::Text(val) => assert_eq!(val, "Infinity"),
-            other => panic!("Expected PropertyValue::Text for Infinity, got {other:?}"),
-        }
-        match PropertyValue::from(SafePropertyValue("inf".to_string())) {
-            PropertyValue::Text(val) => assert_eq!(val, "inf"),
-            other => panic!("Expected PropertyValue::Text for inf, got {other:?}"),
-        }
-        match PropertyValue::from(SafePropertyValue("-infinity".to_string())) {
-            PropertyValue::Text(val) => assert_eq!(val, "-infinity"),
-            other => panic!("Expected PropertyValue::Text for -infinity, got {other:?}"),
-        }
-
-        // Normal numbers should map to Integer or Float
-        match PropertyValue::from(SafePropertyValue("123".to_string())) {
-            PropertyValue::Integer(val) => assert_eq!(val, 123),
-            other => panic!("Expected PropertyValue::Integer for 123, got {other:?}"),
-        }
-        match PropertyValue::from(SafePropertyValue("123.45".to_string())) {
-            PropertyValue::Float(val) => assert_eq!(val, 123.45),
-            other => panic!("Expected PropertyValue::Float for 123.45, got {other:?}"),
-        }
-
-        // Arbitrary text should map to Text
-        match PropertyValue::from(SafePropertyValue("hello".to_string())) {
-            PropertyValue::Text(val) => assert_eq!(val, "hello"),
-            other => panic!("Expected PropertyValue::Text for hello, got {other:?}"),
-        }
-    }
-}
