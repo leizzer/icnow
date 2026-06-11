@@ -8,25 +8,40 @@ pub mod tools;
 pub mod watcher;
 
 use lbug::{Database, Connection, SystemConfig};
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
-static DB: OnceLock<Database> = OnceLock::new();
+static DBS: OnceLock<Mutex<HashMap<String, &'static Database>>> = OnceLock::new();
 
 pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
-    if let Some(db) = DB.get() {
-        Ok(db)
-    } else {
-        let db = Database::new(path, SystemConfig::default())
-            .map_err(|e| format!("Failed to open DB: {}", e))?;
-            
-        let _ = DB.set(db); // Ignore if another thread won the race
-        
-        let saved_db = DB.get().unwrap();
-        let conn = Connection::new(saved_db).unwrap();
-        init_schema(&conn)?;
-        
-        Ok(saved_db)
+    tracing::info!("get_or_init_db called with path: {}", path);
+    let map = DBS.get_or_init(|| Mutex::new(HashMap::new()));
+    
+    let path_str = path.to_string();
+    {
+        let guard = map.lock().unwrap();
+        if let Some(db) = guard.get(&path_str) {
+            tracing::info!("Found existing DB for path: {}", path_str);
+            return Ok(*db);
+        }
     }
+    
+    tracing::info!("Initializing new DB for path: {}", path_str);
+    let db = Database::new(path, SystemConfig::default())
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+        
+    tracing::info!("Leaking DB and opening connection");
+    let leaked_db = Box::leak(Box::new(db));
+    let conn = Connection::new(leaked_db).unwrap();
+    tracing::info!("Calling init_schema");
+    init_schema(&conn)?;
+    
+    tracing::info!("Inserting DB into map");
+    let mut guard = map.lock().unwrap();
+    guard.insert(path_str, leaked_db);
+    
+    tracing::info!("Returning DB");
+    Ok(leaked_db)
 }
 
 pub fn open_db_connection(path: &str) -> Result<Connection<'static>, String> {
