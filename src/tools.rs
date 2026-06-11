@@ -734,9 +734,13 @@ mod tests {
         let graph = crate::open_db_graph(db_path).unwrap();
 
         // 1. Create a dummy code node so we can validate links pointing to it
-        graph
-            .upsert_node("src/main.rs", HashMap::<String, String>::new(), "File")
-            .unwrap();
+        let node1 = crate::models::Node {
+            id: "src/main.rs".to_string(),
+            label: "File".to_string(),
+            kind: "File".to_string(),
+            properties: HashMap::new(),
+        };
+        node1.save(&graph).unwrap();
 
         // Create an absolute path node for testing relative path resolution
         let cur_dir = std::env::current_dir().unwrap();
@@ -746,9 +750,13 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .to_string();
-        graph
-            .upsert_node(&abs_file_path, HashMap::<String, String>::new(), "File")
-            .unwrap();
+        let node2 = crate::models::Node {
+            id: abs_file_path.clone(),
+            label: "File".to_string(),
+            kind: "File".to_string(),
+            properties: HashMap::new(),
+        };
+        node2.save(&graph).unwrap();
 
         let service = GraphService {
             db_path: db_path.to_string(),

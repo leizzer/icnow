@@ -48,11 +48,11 @@ pub fn generate_html(db_path: &str, out_path: &str, filter_path: &str) -> Result
         };
 
         elements.push(format!(
-            "{{ data: {{ id: '{id}', label: '{node_label}' }}, classes: '{kind}' }}",
+            "{{ data: {{ id: '{id}', label: '{node_label}', color: '{color}' }}, classes: '{kind}' }}",
         ));
     }
 
-    let edge_query = "MATCH (s)-[r]->(t) RETURN s.id AS s_id, t.id AS t_id, type(r) as edge_label";
+    let edge_query = "MATCH (s)-[r]->(t) RETURN s.id AS s_id, t.id AS t_id, struct_extract(r, '_LABEL') as edge_label";
     let mut edges_res = conn.query(edge_query).map_err(|e| anyhow::anyhow!(e))?;
     let e_cols = edges_res.get_column_names();
 

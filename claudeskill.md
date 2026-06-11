@@ -69,14 +69,11 @@ mcp__icnow__generate_interactive_map(output_path: "architecture.html", filter_pa
 mcp__icnow__list_indexed_files()
 ```
 
-**`mcp__icnow__query_graph`** - Executes raw SQLite SQL queries against the graph database (`nodes`, `edges`, `node_labels`, `node_props_text`, `property_keys`). **ALWAYS** prefer this over Cypher for lookups, counts, and property filtering to leverage indexes (12,000x faster). **NEVER** use `PRAGMA` to discover tables; use `get_graph_schema` instead.
-```sql
-mcp__icnow__query_graph(query: "SELECT COUNT(*) FROM edges WHERE type = 'HAS_METHOD'")
-```
+**`mcp__icnow__query_graph`** - **[DEPRECATED]** Raw SQLite SQL queries are no longer supported. Always use `query_graph_cypher` instead.
 
-**`mcp__icnow__query_graph_cypher`** - Executes a graph query using Cypher syntax. **Prefer this ONLY** for multi-hop structural/relationship traversals (e.g. `MATCH (a)-[*1..3]->(b)`).
+**`mcp__icnow__query_graph_cypher`** - Executes a graph query using Cypher syntax. **This is the primary tool** for executing custom graph traversals, node counts, or property lookups on LadybugDB.
 ```cypher
-MATCH (c:Class {name: "User"})-[:HAS_METHOD]->(m:Method) RETURN m.name ORDER BY m.name
+MATCH (c:Symbol {name: "User"})-[:HAS_METHOD]->(m:Symbol) RETURN m.name ORDER BY m.name
 ```
 
 **`mcp__icnow__parse_project_file`** - Parses a file and adds it to the graph. Only call this if the file is new or recently modified heavily.

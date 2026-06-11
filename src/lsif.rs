@@ -768,6 +768,7 @@ mod tests {
     fn test_lsif_parsing() {
         let db_path = "test_lsif.db";
         let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_file(format!("{}.wal", db_path));
 
         // Create mock LSIF JSON lines file content
         let mock_content = r#"{"id":1,"type":"vertex","label":"metaData","version":"0.5.0","projectRoot":"file:///project"}
@@ -795,5 +796,6 @@ mod tests {
 
         let _ = std::fs::remove_file(lsif_file_path);
         let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_file(format!("{}.wal", db_path));
     }
 }

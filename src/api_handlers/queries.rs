@@ -4,8 +4,8 @@ use crate::tools::{
 };
 
 pub fn handle_query_graph(
-    db_path: &str,
-    req: QueryGraphRequest,
+    _db_path: &str,
+    _req: QueryGraphRequest,
 ) -> Result<String, String> {
     Err("SQLite queries are no longer supported. Please use Cypher with QueryGraphCypherRequest.".to_string())
 }

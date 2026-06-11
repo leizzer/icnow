@@ -45,12 +45,33 @@ fn node_exists(conn: &lbug::Connection, id: &str) -> bool {
 }
 
 fn resolve_target_id(id: &str, db_path: &str) -> String {
-    let mut resolved = id.to_string();
-    if resolved.starts_with('/') && !resolved.contains("::") {
-        let abs_path = std::fs::canonicalize(resolved.clone()).unwrap_or_else(|_| std::path::PathBuf::from(resolved.clone()));
-        resolved = abs_path.to_string_lossy().to_string();
+    if id.starts_with("memory::") {
+        return id.to_string();
     }
-    resolved
+
+    let parts: Vec<&str> = id.split("::").collect();
+    if parts.is_empty() {
+        return id.to_string();
+    }
+
+    let first_part = parts[0];
+    let first_path = std::path::Path::new(first_part);
+    if first_path.is_relative() {
+        if let Some(db_dir) = std::path::Path::new(db_path).parent() {
+            let abs_path = db_dir.join(first_part);
+            let resolved_first = if let Ok(canon) = abs_path.canonicalize() {
+                canon.to_string_lossy().to_string()
+            } else {
+                abs_path.to_string_lossy().to_string()
+            };
+
+            let mut new_parts = vec![resolved_first.as_str()];
+            new_parts.extend_from_slice(&parts[1..]);
+            return new_parts.join("::");
+        }
+    }
+
+    id.to_string()
 }
 
 fn get_str(row: &[Value], cols: &[String], name: &str) -> String {
@@ -135,39 +156,62 @@ pub fn handle_get_memory(db_path: &str, req: GetMemoryRequest) -> Result<String,
     let description = get_str(&row, &cols, "description");
     let keywords = get_str(&row, &cols, "keywords");
 
-    let l_q = format!("MATCH (m:Memory {{id: '{}'}})-[r]->(target) RETURN target.id AS target_id, target.name AS target_name, type(r) AS rel_type, label(target) AS target_labels", req.id.replace("'", "''"));
-    let mut links = Vec::new();
-    if let Ok(mut links_res) = conn.query(&l_q) {
-        let l_cols = links_res.get_column_names();
-        for l_row in links_res.by_ref() {
-            links.push(MemoryLink {
-                target_id: get_str(&l_row, &l_cols, "target_id"),
-                target_name: get_str(&l_row, &l_cols, "target_name"),
-                rel_type: get_str(&l_row, &l_cols, "rel_type"),
-                target_type: get_str(&l_row, &l_cols, "target_labels"),
-            });
+    let l_q = format!("MATCH (m:Memory {{id: '{}'}})-[r]->(target) RETURN target.id AS target_id, target.name AS target_name, struct_extract(r, '_LABEL') AS rel_type, label(target) AS target_labels", req.id.replace("'", "''"));
+    let mut sub_concepts = Vec::new();
+    let mut code_nodes = Vec::new();
+
+    let mut links_res = conn.query(&l_q).map_err(|e| format!("Failed to query links: {e}"))?;
+    let l_cols = links_res.get_column_names();
+    for l_row in links_res.by_ref() {
+        let target_id = get_str(&l_row, &l_cols, "target_id");
+        let target_name = get_str(&l_row, &l_cols, "target_name");
+        let rel_type = get_str(&l_row, &l_cols, "rel_type");
+        let kind = get_str(&l_row, &l_cols, "target_labels");
+
+        let mut display_name = target_name;
+        if display_name.is_empty() {
+            display_name = target_id.clone();
+        }
+
+        if target_id.starts_with("memory::") {
+            sub_concepts.push(format!(
+                "* [**{display_name}**]({target_id}) - Relationship: `{rel_type}`"
+            ));
+        } else {
+            code_nodes.push(format!(
+                "* **{kind}** (`{display_name}`) [id: `{target_id}`] - Relationship: `{rel_type}`"
+            ));
         }
     }
 
-    let mem_res = GetMemoryResponse {
-        id: req.id,
-        name,
-        description,
-        keywords: keywords.split(", ").filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
-        links,
-    };
+    let mut output = format!(
+        "# Memory: {}\n\n**ID**: `{}`\n**Keywords**: `{}`\n\n## Description\n{}\n",
+        name, req.id, keywords, description
+    );
 
-    Ok(serde_json::to_string_pretty(&mem_res).unwrap())
+    if !sub_concepts.is_empty() {
+        output.push_str("\n## Related Sub-Concepts\n");
+        output.push_str(&sub_concepts.join("\n"));
+        output.push('\n');
+    }
+
+    if !code_nodes.is_empty() {
+        output.push_str("\n## Connected Code Elements\n");
+        output.push_str(&code_nodes.join("\n"));
+        output.push('\n');
+    }
+
+    Ok(output)
 }
 
 pub fn handle_search_memories(db_path: &str, req: SearchMemoriesRequest) -> Result<String, String> {
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
     
     let limit = 10;
-    let q_term = req.query.replace("'", "''");
+    let q_term = req.query.replace("'", "''").to_lowercase();
     
-    // Naive Cypher CONTAINS search
-    let q = format!("MATCH (m:Memory) WHERE m.name CONTAINS '{q_term}' OR m.description CONTAINS '{q_term}' OR m.keywords CONTAINS '{q_term}' RETURN m.id AS id, m.name AS name, m.description AS description, m.keywords AS keywords LIMIT {limit}");
+    // Case-insensitive Cypher CONTAINS search
+    let q = format!("MATCH (m:Memory) WHERE toLower(m.name) CONTAINS '{q_term}' OR toLower(m.description) CONTAINS '{q_term}' OR toLower(m.keywords) CONTAINS '{q_term}' RETURN m.id AS id, m.name AS name, m.description AS description, m.keywords AS keywords LIMIT {limit}");
     
     let mut res = conn.query(&q).map_err(|e| format!("Failed to search memories: {e}"))?;
     let cols = res.get_column_names();

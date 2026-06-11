@@ -412,45 +412,67 @@ fn get_file_metadata_properties(file_path: &str) -> HashMap<String, String> {
 pub fn parse_file(file_path: &str, conn: &lbug::Connection) -> Result<FileSummary> {
     let (summary, bulk_nodes, bulk_edges) = parse_file_in_memory(file_path)?;
 
+    let mut prep_file = conn.prepare("MERGE (n:File {id: $id}) ON CREATE SET n.name=$name, n.kind=$kind, n.last_modified=$last_modified ON MATCH SET n.name=$name, n.kind=$kind, n.last_modified=$last_modified").map_err(|e| anyhow::anyhow!("Prepare File failed: {}", e))?;
+    let mut prep_symbol = conn.prepare("MERGE (n:Symbol {id: $id}) ON CREATE SET n.name=$name, n.signature=$signature, n.docstring=$docstring, n.kind=$kind, n.source_code=$source_code, n.file=$file, n.line=$line ON MATCH SET n.name=$name, n.signature=$signature, n.docstring=$docstring, n.kind=$kind, n.source_code=$source_code, n.file=$file, n.line=$line").map_err(|e| anyhow::anyhow!("Prepare Symbol failed: {}", e))?;
+
     for (id, props, label) in bulk_nodes {
-        let table_name = if label == "File" { "File" } else { "Symbol" };
-        let mut query = format!("MERGE (n:{} {{id: '{}'}})", table_name, id.replace("'", "''"));
-        
-        let mut sets = vec![];
-        if table_name == "Symbol" {
-            sets.push(format!("n.kind = '{}'", label.replace("'", "''")));
+        if label == "File" {
+            let name = props.get("name").cloned().unwrap_or_default();
+            let kind = props.get("kind").cloned().unwrap_or_else(|| "file".to_string());
+            let last_modified = props.get("last_modified").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+            
+            conn.execute(&mut prep_file, vec![
+                ("id", lbug::Value::String(id)),
+                ("name", lbug::Value::String(name)),
+                ("kind", lbug::Value::String(kind)),
+                ("last_modified", lbug::Value::Int64(last_modified)),
+            ]).map_err(|e| anyhow::anyhow!("Merge File failed: {}", e))?;
+        } else {
+            let name = props.get("name").cloned().unwrap_or_default();
+            let signature = props.get("signature").cloned().unwrap_or_default();
+            let docstring = props.get("docstring").cloned().unwrap_or_default();
+            let kind = label.clone();
+            let source_code = props.get("source_code").cloned().unwrap_or_default();
+            let file = props.get("file").cloned().unwrap_or_default();
+            let line = props.get("line").cloned().unwrap_or_default();
+
+            conn.execute(&mut prep_symbol, vec![
+                ("id", lbug::Value::String(id)),
+                ("name", lbug::Value::String(name)),
+                ("signature", lbug::Value::String(signature)),
+                ("docstring", lbug::Value::String(docstring)),
+                ("kind", lbug::Value::String(kind)),
+                ("source_code", lbug::Value::String(source_code)),
+                ("file", lbug::Value::String(file)),
+                ("line", lbug::Value::String(line)),
+            ]).map_err(|e| anyhow::anyhow!("Merge Symbol failed: {}", e))?;
         }
-        for (k, v) in props {
-            if k != "id" {
-                sets.push(format!("n.{} = '{}'", k, v.replace("'", "''")));
-            }
-        }
-        if !sets.is_empty() {
-            query.push_str(" ON MATCH SET ");
-            query.push_str(&sets.join(", "));
-            query.push_str(" ON CREATE SET ");
-            query.push_str(&sets.join(", "));
-        }
-        
-        conn.query(&query).map_err(|e| anyhow::anyhow!("Merge node failed: {}", e))?;
     }
 
-    for (source, target, props, label) in bulk_edges {
-        // Determine source table
+    let mut edge_preps = std::collections::HashMap::new();
+
+    for (source, target, _props, label) in bulk_edges {
         let src_table = if source.starts_with('/') && !source.contains("::") { "File" } else { "Symbol" };
         let tgt_table = if target.starts_with('/') && !target.contains("::") { "File" } else { "Symbol" };
         
         let rel_table = match label.as_str() {
-            "REL_CONTAINS" => "REL_CONTAINS",
+            "REL_CONTAINS" | "CONTAINS" => "REL_CONTAINS",
             "HAS_METHOD" => "HAS_METHOD",
             "CALLS" | _ => "CALLS",
         };
 
-        let query = format!(
-            "MATCH (s:{} {{id: '{}'}}), (t:{} {{id: '{}'}}) MERGE (s)-[:{}]->(t)",
-            src_table, source.replace("'", "''"), tgt_table, target.replace("'", "''"), rel_table
-        );
-        conn.query(&query).map_err(|e| anyhow::anyhow!("Merge edge failed: {}", e))?;
+        let query = format!("MATCH (s:{} {{id: $src}}), (t:{} {{id: $tgt}}) MERGE (s)-[:{}]->(t)", src_table, tgt_table, rel_table);
+        
+        if !edge_preps.contains_key(&query) {
+            let prep = conn.prepare(&query).map_err(|e| anyhow::anyhow!("Prepare Edge failed: {}", e))?;
+            edge_preps.insert(query.clone(), prep);
+        }
+        
+        let prep = edge_preps.get_mut(&query).unwrap();
+        conn.execute(prep, vec![
+            ("src", lbug::Value::String(source)),
+            ("tgt", lbug::Value::String(target)),
+        ]).map_err(|e| anyhow::anyhow!("Merge Edge failed: {}", e))?;
     }
 
     Ok(summary)
@@ -600,7 +622,7 @@ mod tests {
     fn test_parse_twice() {
         let db_path = "test_parse_twice.db";
         let _ = std::fs::remove_file(db_path);
-        let graph = Graph::open(db_path).unwrap();
+        let graph = crate::open_db_graph(db_path).unwrap();
 
         let ruby_file =
             "/Users/cristian/Projects/dgapp_bkp/app/controllers/api/v2/webhooks_controller.rb";
@@ -620,7 +642,7 @@ mod tests {
     fn test_parse_rust() {
         let db_path = "test_parse_rust.db";
         let _ = std::fs::remove_file(db_path);
-        let graph = Graph::open(db_path).unwrap();
+        let graph = crate::open_db_graph(db_path).unwrap();
 
         let rs_file = "src/parser.rs";
 
@@ -638,7 +660,7 @@ mod tests {
     fn test_parse_user_rb() {
         let db_path = "test_parse_user_rb.db";
         let _ = std::fs::remove_file(db_path);
-        let graph = Graph::open(db_path).unwrap();
+        let graph = crate::open_db_graph(db_path).unwrap();
         let ruby_file = "/Users/cristian/Projects/dgapp_bkp/app/models/user.rb";
         let res = parse_file(ruby_file, &graph).unwrap();
         println!("Structures: {:?}", res.structures);

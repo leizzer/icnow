@@ -74,6 +74,18 @@ pub struct Edge {
     pub properties: HashMap<String, String>,
 }
 
+fn get_node_label(conn: &Connection, id: &str) -> Option<String> {
+    for label in &["File", "Symbol", "Memory"] {
+        let q = format!("MATCH (n:{} {{id: '{}'}}) RETURN n.id LIMIT 1", label, id.replace("'", "''"));
+        if let Ok(mut res) = conn.query(&q) {
+            if res.by_ref().next().is_some() {
+                return Some(label.to_string());
+            }
+        }
+    }
+    None
+}
+
 impl Edge {
     pub fn save(&self, conn: &Connection) -> anyhow::Result<()> {
         let rel_table = match self.label.as_str() {
@@ -85,9 +97,33 @@ impl Edge {
             _ => "CALLS",
         };
 
+        let src_label = get_node_label(conn, &self.source).unwrap_or_else(|| {
+            if self.source.starts_with("memory::") {
+                "Memory".to_string()
+            } else if self.source.starts_with('/') && !self.source.contains("::") {
+                "File".to_string()
+            } else {
+                "Symbol".to_string()
+            }
+        });
+
+        let tgt_label = get_node_label(conn, &self.target).unwrap_or_else(|| {
+            if self.target.starts_with("memory::") {
+                "Memory".to_string()
+            } else if self.target.starts_with('/') && !self.target.contains("::") {
+                "File".to_string()
+            } else {
+                "Symbol".to_string()
+            }
+        });
+
         let query = format!(
-            "MATCH (s {{id: '{}'}}), (t {{id: '{}'}}) MERGE (s)-[:{}]->(t)",
-            self.source.replace("'", "''"), self.target.replace("'", "''"), rel_table
+            "MATCH (s:{} {{id: '{}'}}), (t:{} {{id: '{}'}}) MERGE (s)-[:{}]->(t)",
+            src_label,
+            self.source.replace("'", "''"),
+            tgt_label,
+            self.target.replace("'", "''"),
+            rel_table
         );
 
         conn.query(&query).map_err(|e| anyhow::anyhow!("Failed to save edge: {e}"))?;

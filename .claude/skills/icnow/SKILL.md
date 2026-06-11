@@ -15,11 +15,12 @@ The `icnow` MCP server hosts a graph representation of this repository.
 **DO NOT** use `grep`, `find`, or read entire files to find definitions, outline structure, or trace calls. **YOU MUST USE `icnow` TOOLS FIRST.** 
 
 ### When to Use icnow:
-- **Finding Definitions**: "Where is `User` model or `SessionsController` defined?" $\rightarrow$ Use `search_symbols`
-- **File Outlines**: "What classes or methods are inside `user.rb`?" $\rightarrow$ Use `get_file_structure`
-- **Tracing Calls**: "What function invokes `verify_webhook_signature`?" $\rightarrow$ Use `get_dependencies` or `trace_call_path`
-- **Visualizing**: "Show me a diagram/map of `app/services`" $\rightarrow$ Use `generate_interactive_map`
-- **Architectural Queries**: "List all methods in class `User` that call `send_email`" $\rightarrow$ Use `query_graph_cypher`
+- **Finding Definitions**: "Where is `User` model or `SessionsController` defined?" -> Use `search_symbols`
+- **File Outlines**: "What classes or methods are inside `user.rb`?" -> Use `get_file_structure`
+- **Tracing Calls**: "What function invokes `verify_webhook_signature`?" -> Use `get_dependencies` or `trace_call_path`
+- **Visualizing**: "Show me a diagram/map of `app/services`" -> Use `generate_interactive_map`
+- **Architectural Queries**: "List all methods in class `User` that call `send_email`" -> Use `query_graph_cypher`
+- **Concept Memory**: "Document/retrieve architectural concepts, entry points, business rules, or code summaries to reduce token usage and share knowledge" -> Use `save_memory`, `get_memory`, `search_memories`, or `list_memories`
 
 ### When NOT to Use icnow:
 - Reading/writing non-source code files (Markdown, JSON, Configs, YAML). Use standard read tools.
@@ -31,37 +32,61 @@ The `icnow` MCP server hosts a graph representation of this repository.
 
 ---
 
+## 🧠 CRITICAL MEMORY NODE RULES: HIGH-LEVEL CONCEPTS ONLY
+
+Memory nodes must **only** represent **major, high-level architectural or domain concepts** (e.g., `'payment'`, `'authentication'`, `'post review'`, `'publishing'`). 
+
+### 🚫 DO NOT:
+- Create memories for stupid, small details, individual bugs, temporary features, or single helper methods.
+- Save granular, low-level elements that require constant maintenance on every minor code change.
+- Waste database space with trivial or boilerplate code notes.
+
+### ✅ DO:
+- **Focus on Big Concepts**: Only create memories for broad, domain-level boundaries that help kickstart future work (e.g., when a user says "I need to change the payment process" or "I must add a new gateway", the agent should immediately fetch context from `icnow`).
+- **Link Key Anchors**: Link memory nodes to high-level entry points, core flow files, main classes/controllers/models, or other sub-concept memory nodes that support the overall idea.
+- **Maintain Stability**: Ensure the descriptions and summaries are high-level enough to remain stable and correct over time without needing constant modification.
+
+### Kickstarting Workflow:
+1. When starting a task in a major functional area (like Payments), **always** call `search_memories` or `list_memories` first to pull the domain map, entry points, and high-level context.
+2. Only write a new memory when introducing a brand new major domain or when a significant existing system concept is undocumented.
+
+---
+
 ## 💡 Token-Saving Multi-Tool Concatenation Guide
 
 To prevent exhausting context limits and avoid reading full files, leverage tool concatenation to fetch **only** the precise information needed:
 
-### 1. The Navigation Loop: Search $\rightarrow$ Target Implementation
+### 1. The Navigation Loop: Search -> Target Implementation
 *   **Goal**: Understand a method or class logic without reading the entire file.
 *   **Workflow**:
     1. Call `search_symbols(query: "...", kind_filter: ["Class", "Method"])` to retrieve the exact Node ID.
     2. Immediately call `get_symbol_implementation(node_id: "...")` using the matched ID.
 *   **Token Savings**: **90-95%**. Pulls in 10-30 lines of targeted code instead of a 300+ line file.
 
-### 2. The Structural Probe: Outline File $\rightarrow$ Target Methods
+### 2. The Structural Probe: Outline File -> Target Methods
 *   **Goal**: Inspect a file's public interface and read specific methods of interest.
 *   **Workflow**:
     1. Call `get_file_structure(file_path: "...")` to obtain a hierarchical list of defined classes and methods.
     2. Selectively call `get_symbol_implementation(node_id: "...")` *only* on the specific method nodes needed.
 *   **Token Savings**: **70-80%**. Avoids reading imports, docstrings, helper boilerplate, and unrelated method implementations.
 
-### 3. The Call-Chain Discovery: Trace Calls $\rightarrow$ Snippet Inspection
+### 3. The Call-Chain Discovery: Trace Calls -> Snippet Inspection
 *   **Goal**: Trace how data flows from an entrypoint (e.g., Controller callback) to a database operation.
 *   **Workflow**:
     1. Call `trace_call_path(start_node_id: "...", end_node_id: "...")` (or run a Cypher query) to map out intermediate calls.
     2. Inspect the bodies of the intermediate function nodes using `get_symbol_implementation` for the specific call site.
 *   **Token Savings**: **80-90%**. Avoids opening and reading 4-5 files along the dependency path.
 
-### 4. Cypher Aggregation (One Call, Global Answers)
-*   **Goal**: Answer questions about architectural structure or relationships across the entire codebase in one round-trip.
-*   **Workflow**: Use `query_graph_cypher(query: "...")` to extract high-level metrics or patterns.
-    *   *Example: Find all methods in class `User` that call a method starting with `UserLog.`*
-        `MATCH (c:Class {name: "User"})-[:HAS_METHOD]->(m:Method)-[:CALLS]->(t:Unresolved) WHERE t.id STARTS WITH 'UserLog.' RETURN m.name, t.id`
-*   **Token Savings**: **99%**. One single Cypher query returns a tabular list, avoiding grepping and reading dozens of potential files.
+### 4. Cypher Performance Best Practices on LadybugDB
+The database backend is powered by LadybugDB (Kùzu). Standard SQL queries are deprecated and not supported. Always use `query_graph_cypher` to execute custom Cypher queries.
+
+*   **Node Labels**: There are exactly three node tables: `:Symbol`, `:File`, and `:Memory`. Do not use labels like `:Class`, `:Method`, or `:Unresolved`. Instead, filter on the `kind` property.
+    *   *Example: Find all methods in class `User`*
+        `MATCH (c:Symbol {kind: "Class", name: "User"})-[:HAS_METHOD]->(m:Symbol) WHERE m.kind = "Method" RETURN m.name ORDER BY m.name`
+*   **Case Insensitivity**: Cypher `CONTAINS` searches are case-sensitive by default. To perform case-insensitive text searches, use `toLower(property) CONTAINS "search_term"` (with the search term in lowercase).
+    *   *Example: Find all memory nodes containing 'auth' in name or description*
+        `MATCH (m:Memory) WHERE toLower(m.name) CONTAINS 'auth' OR toLower(m.description) CONTAINS 'auth' RETURN m.id, m.name`
+*   **Relationship Types**: Relationship tables are `REL_CONTAINS` (File to Symbol, Symbol to Symbol), `CALLS` (Symbol to Symbol), `HAS_METHOD` (Symbol to Symbol), `LINKS_TO` (Memory to Memory/Symbol/File), and `IMPORTS` (File to File).
 
 ---
 
@@ -85,6 +110,14 @@ To prevent exhausting context limits and avoid reading full files, leverage tool
     Lists all files tracked in the knowledge graph.
 9.  **`parse_project_file(file_path: String)`**  
     Parses a file and adds it to the graph. Only call if the file is new or recently modified heavily.
+10. **`save_memory(id: String, name: String, description: String, keywords: Vec<String>, links: Vec<String>, link_type: Option<String>, project_root: Option<String>)`**  
+    Saves or updates a high-level concept memory node. Enforces `memory::` prefix on `id`. Validates that all items in `links` (file paths, method/class/function IDs, or other memory IDs) already exist in the graph database.
+11. **`get_memory(id: String, project_root: Option<String>)`**  
+    Retrieves the properties of a specific memory node along with all its direct links and neighborhood concepts.
+12. **`search_memories(query: String, project_root: Option<String>)`**  
+    Searches memory nodes matching the text query case-insensitively across name, description, and keywords using Cypher.
+13. **`list_memories(project_root: Option<String>)`**  
+    Lists all memory nodes stored in the database for a high-level overview of codebase concepts.
 
 ---
 
