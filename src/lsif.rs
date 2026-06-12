@@ -718,6 +718,9 @@ pub fn parse_and_import_lsif(
             all_edges.len()
         );
 
+        let mut current_tx_nodes = 0;
+        let _ = conn.query("BEGIN TRANSACTION");
+
         for (id, props, label) in all_nodes {
             let mut safe_props = HashMap::new();
             let mut kind = String::new();
@@ -734,8 +737,15 @@ pub fn parse_and_import_lsif(
                 properties: safe_props,
             };
             let _ = node.save(&conn);
+            
+            current_tx_nodes += 1;
+            if current_tx_nodes >= 50 {
+                let _ = conn.query("COMMIT");
+                current_tx_nodes = 0;
+                let _ = conn.query("BEGIN TRANSACTION");
+            }
         }
-
+        
         for (source, target, props, label) in all_edges {
             let mut safe_props = HashMap::new();
             for (k, v) in props {
@@ -749,7 +759,16 @@ pub fn parse_and_import_lsif(
                 properties: safe_props,
             };
             let _ = edge.save(&conn);
+            
+            current_tx_nodes += 1;
+            if current_tx_nodes >= 50 {
+                let _ = conn.query("COMMIT");
+                current_tx_nodes = 0;
+                let _ = conn.query("BEGIN TRANSACTION");
+            }
         }
+        
+        let _ = conn.query("COMMIT");
     }
 
     tracing::info!(
