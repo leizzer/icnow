@@ -103,8 +103,13 @@ impl GraphService {
             self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.file_path), None);
         let graph =
             crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+        let _ = graph.query("BEGIN TRANSACTION");
         let summary = crate::parser::parse_file(&req.file_path, &graph)
-            .map_err(|e| format!("Parse error: {e}"))?;
+            .map_err(|e| {
+                let _ = graph.query("ROLLBACK");
+                format!("Parse error: {e}")
+            })?;
+        let _ = graph.query("COMMIT");
 
         let mut out = format!(
             "Successfully parsed `{}` and added nodes to graph.\n\n",

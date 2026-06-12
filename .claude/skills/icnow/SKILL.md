@@ -14,21 +14,28 @@ This skill outlines how to interact with the `icnow` MCP server to navigate the 
 The `icnow` MCP server hosts a graph representation of this repository. 
 **DO NOT** use `grep`, `find`, or read entire files to find definitions, outline structure, or trace calls. **YOU MUST USE `icnow` TOOLS FIRST.** 
 
+### 🏆 Benchmark Results & Token Savings
+Recent benchmarks show where `icnow` shines and where it falls short:
+1. **✅ WINS for structural queries (95-98% savings):** Method counts, class listings, file structures, finding definitions. Avoids reading full files. Average savings when it works is **80% token reduction**.
+2. **❌ LOSES for simple text searches (~50% worse):** Do not use `icnow` for pattern matching like `"belongs_to"`, `"def method_name"`, etc. Use `grep` or traditional search for these.
+
 ### When to Use icnow:
-- **Finding Definitions**: "Where is `User` model or `SessionsController` defined?" -> Use `search_symbols`
-- **File Outlines**: "What classes or methods are inside `user.rb`?" -> Use `get_file_structure`
+- **Finding Definitions**: "Find definition of symbol X" or "Where is `User` model or `SessionsController` defined?" -> Use `search_symbols`
+- **File Outlines**: "Show me the structure of this file" or "What classes exist in this app?" -> Use `get_file_structure`
 - **Tracing Calls**: "What function invokes `verify_webhook_signature`?" -> Use `get_dependencies` or `trace_call_path`
+- **Structural Cypher Queries**: "How many methods does X have?" or "List all methods in class `User` that call `send_email`" -> Use `query_graph_cypher`
 - **Visualizing**: "Show me a diagram/map of `app/services`" -> Use `generate_interactive_map`
-- **Architectural Queries**: "List all methods in class `User` that call `send_email`" -> Use `query_graph_cypher`
 - **Concept Memory**: "Document/retrieve architectural concepts, entry points, business rules, or code summaries to reduce token usage and share knowledge" -> Use `save_memory`, `get_memory`, `search_memories`, or `list_memories`
 
-### When NOT to Use icnow:
+### When to Use grep / Traditional Search:
+- Simple text pattern matching (e.g., `"belongs_to"`, `"has_many"`, `"def method_name"`).
+- "Find all files containing X string".
 - Reading/writing non-source code files (Markdown, JSON, Configs, YAML). Use standard read tools.
 - When you already know the exact file path and need to read the *entire* file body.
 
 ### ⚠️ DO NOT GENERALIZE FAILURES:
 - **Never assume complete failure**: If an `icnow` query fails, returns empty results, or lacks context for a *specific* lookup, do NOT assume the tool or database is broken for subsequent lookups.
-- **Always try `icnow` first**: Treat each code investigation task as independent. You must *always* attempt to use `icnow` first for every new task, even if a previous `icnow` call in the same session fell back to native search.
+- **Always try `icnow` first for structural queries**: Treat each code investigation task as independent. You must *always* attempt to use `icnow` first for structural tasks, even if a previous `icnow` call in the same session fell back to native search.
 
 ---
 

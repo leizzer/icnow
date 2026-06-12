@@ -137,15 +137,23 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
         }
     }
 
-    for path in &files_to_delete {
-        let _ = delete_file_nodes(&conn, path);
+    for chunk in files_to_delete.chunks(50) {
+        let _ = conn.query("BEGIN TRANSACTION");
+        for path in chunk {
+            let _ = delete_file_nodes(&conn, path);
+        }
+        let _ = conn.query("COMMIT");
     }
 
-    for path in &files_to_reindex {
-        let _ = delete_file_nodes(&conn, path);
-        if let Err(e) = crate::parser::parse_file(path, &conn) {
-            tracing::error!("Failed to parse file {}: {}", path, e);
+    for chunk in files_to_reindex.chunks(50) {
+        let _ = conn.query("BEGIN TRANSACTION");
+        for path in chunk {
+            let _ = delete_file_nodes(&conn, path);
+            if let Err(e) = crate::parser::parse_file(path, &conn) {
+                tracing::error!("Failed to parse file {}: {}", path, e);
+            }
         }
+        let _ = conn.query("COMMIT");
     }
 
     tracing::info!(
@@ -196,13 +204,17 @@ fn handle_watcher_event(event: Event, conn: &Connection) {
         
         if exists && abs_path.is_file() {
             tracing::info!("Watcher: reindexing {}", path_str);
+            let _ = conn.query("BEGIN TRANSACTION");
             let _ = delete_file_nodes(conn, &path_str);
             if let Err(e) = crate::parser::parse_file(&path_str, conn) {
                 tracing::error!("Failed to parse file {}: {}", path_str, e);
             }
+            let _ = conn.query("COMMIT");
         } else if !exists {
             tracing::info!("Watcher: removing deleted file {}", path_str);
+            let _ = conn.query("BEGIN TRANSACTION");
             let _ = delete_file_nodes(conn, &path_str);
+            let _ = conn.query("COMMIT");
         }
     }
 }

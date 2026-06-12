@@ -22,7 +22,7 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
     
     let query_param = req.query.replace("'", "''");
     
-    let mut q = format!("MATCH (n) WHERE (n:Symbol AND (n.name CONTAINS '{query_param}' OR n.id CONTAINS '{query_param}')) OR (n:File AND n.id CONTAINS '{query_param}')");
+    let mut q = format!("MATCH (n) WHERE (label(n) = 'Symbol' AND (n.name CONTAINS '{query_param}' OR n.id CONTAINS '{query_param}')) OR (label(n) = 'File' AND n.id CONTAINS '{query_param}')");
     
     if let Some(filters) = &req.kind_filter {
         if !filters.is_empty() {

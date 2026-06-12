@@ -10,19 +10,27 @@ The `icnow` MCP server provides a pre-parsed, semantic knowledge graph of this c
 
 **DO NOT** use `grep`, `find`, or read entire files when you need to understand architecture, trace method calls, or find definitions. **YOU MUST USE `icnow` TOOLS INSTEAD.** Reading full files consumes too much context and `grep` is unreliable.
 
+### 🏆 Benchmark Results & Token Savings
+Recent benchmarks show where `icnow` shines and where it falls short:
+1. **✅ WINS for structural queries (95-98% savings):** Method counts, class listings, file structures, finding definitions. Avoids reading full files. Average savings when it works is **80% token reduction**.
+2. **❌ LOSES for simple text searches (~50% worse):** Do not use `icnow` for pattern matching like `"belongs_to"`, `"def method_name"`, etc. Use `grep` or traditional search for these.
+
 ### When to Use icnow:
-- **Finding Definitions**: "Where is `UserController` defined?" -> Use `search_symbols`
-- **File Outlines**: "What methods are in `user.rb`?" -> Use `get_file_structure`
+- **Finding Definitions**: "Find definition of symbol X" or "Where is `UserController` defined?" -> Use `search_symbols`
+- **File Outlines**: "Show me the structure of this file" or "What classes exist in this app?" -> Use `get_file_structure`
 - **Tracing Calls**: "What calls `authenticate`?" -> Use `get_dependencies`
+- **Structural Cypher Queries**: "How many methods does X have?" -> Use `query_graph_cypher`
 - **Visualizing**: "Show me a map of `app/models`" -> Use `generate_interactive_map`
 
-### When NOT to Use icnow:
-- Non-source code files (Markdown, JSON, Configs). Use standard read tools.
+### When to Use grep / Traditional Search:
+- Simple text pattern matching (e.g., `"belongs_to"`, `"has_many"`).
+- "Find all files containing X string".
+- Non-source code files (Markdown, JSON, Configs).
 - When you already know the exact file path and need to read the *entire* file body.
 
 ### ⚠️ DO NOT GENERALIZE FAILURES:
 - **Never assume complete failure**: If an `icnow` query fails, returns empty results, or does not provide enough context for a *specific* query or file, do NOT assume the tool or the server is broken for other symbols or future tasks.
-- **Always try `icnow` first**: Treat each code investigation task as independent. You must *always* attempt to use `icnow` tools first for every new task, even if a previous `icnow` call in the same session was insufficient. A single missing edge or unparsed type does not make the rest of the database invalid.
+- **Always try `icnow` first for structural queries**: Treat each code investigation task as independent. You must *always* attempt to use `icnow` tools first for structural tasks. A single missing edge or unparsed type does not make the rest of the database invalid.
 
 ---
 

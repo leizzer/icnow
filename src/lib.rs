@@ -18,12 +18,10 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
     let map = DBS.get_or_init(|| Mutex::new(HashMap::new()));
     
     let path_str = path.to_string();
-    {
-        let guard = map.lock().unwrap();
-        if let Some(db) = guard.get(&path_str) {
-            tracing::info!("Found existing DB for path: {}", path_str);
-            return Ok(*db);
-        }
+    let mut guard = map.lock().unwrap();
+    if let Some(db) = guard.get(&path_str) {
+        tracing::info!("Found existing DB for path: {}", path_str);
+        return Ok(*db);
     }
     
     tracing::info!("Initializing new DB for path: {}", path_str);
@@ -37,7 +35,6 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
     init_schema(&conn)?;
     
     tracing::info!("Inserting DB into map");
-    let mut guard = map.lock().unwrap();
     guard.insert(path_str, leaked_db);
     
     tracing::info!("Returning DB");

@@ -1,0 +1,15 @@
+use icnow::api_handlers::queries::handle_list_indexed_files;
+use icnow::models::ListIndexedFilesRequest;
+
+#[test]
+fn test_list() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+        .init();
+    
+    let req = ListIndexedFilesRequest { project_root: None };
+    match handle_list_indexed_files("/Users/cristian/projects/dgapp_bkp/knowledge.db", req) {
+        Ok(res) => println!("OK: {}", res.len()),
+        Err(e) => println!("ERR: {}", e),
+    }
+}
