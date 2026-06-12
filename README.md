@@ -8,7 +8,7 @@ Additionally, this Model Context Protocol (MCP) server allows agents to save, qu
 
 ## Features
 
-- **Graph Representation & Querying:** Utilizes `graphqlite` to natively represent codebase relationships and query them using standard Cypher graph queries.
+- **Graph Representation & Querying:** Utilizes natively embedded **Kùzu (LadybugDB)**, a lightning-fast embeddable graph database, to store codebase relationships and query them using standard openCypher graph queries.
 - **Multi-Layered Architecture Analysis:** Capable of capturing various semantic layers of a project:
   - **Model Level:** Entities and their relationships (e.g., One-to-Many, Belongs-To).
   - **Controller Level:** Endpoints and request handling logic.
@@ -35,13 +35,14 @@ If no database path is specified as the first argument, the server defaults to c
 > **Is the database shared or isolated?**
 > The database is **isolated per project**. Each project that uses `icnow` has its own independent database file.
 
-By default, when `icnow` is invoked, it retrieves the current working directory of the process (`std::env::current_dir()`) and initializes or opens a SQLite file named `knowledge.db` directly inside that directory (i.e. `./knowledge.db`).
+By default, when `icnow` is invoked, it retrieves the current working directory of the process (`std::env::current_dir()`) and initializes a Kùzu database file named `knowledge.db` directly inside that directory (i.e. `./knowledge.db`).
 
 - **Project Isolation:** Because the database resides in the calling project's root, codebase schemas, call graphs, and metadata are cleanly separated between projects.
 - **Custom Location:** If you wish to use a shared database or store the database elsewhere, you can pass the path as a command-line argument:
   ```bash
   icnow /path/to/shared_knowledge.db
   ```
+- **Asynchronous & Chunked Processing:** Massive `deep_scan` LSIF imports run asynchronously using Tokio and process data in 50-item transaction chunks. This prevents Write-Ahead Log (WAL) bloat, safeguards against memory exhaustion, and ensures the MCP client connection doesn't time out during massive 800,000+ node imports.
 
 ## Architecture & Approach
 
@@ -80,27 +81,27 @@ Edges represent the relationships between two nodes.
 - **`source` / `target`**: These **MUST** be the exact String `id`s of the Nodes you are connecting (e.g., source: `src/main.rs::main`, target: `src/models.rs::Node`).
 - **`label`**: The relationship type (e.g., `CALLS`, `IMPORTS`, `REFERENCES`, `BELONGS_TO`, `CONTAINS`).
 
-## Underlying SQL Storage Structure
+## Underlying Graph Database Structure
 
-Under the hood, `graphqlite` maps graph nodes, edges, and properties into a standard SQLite schema. This is useful if you are using the raw `query_graph` SQL tool.
+Under the hood, `icnow` leverages **Kùzu** to map graph nodes and edges into a native graph database schema. 
 
-| Table | Purpose | Key Columns |
+| Table Name | Type | Purpose |
 | :--- | :--- | :--- |
-| `nodes` | Primary entity nodes | `id` (int primary key) |
-| `edges` | Relationship links | `id` (int), `source_id` (fk nodes), `target_id` (fk nodes), `type` (text) |
-| `property_keys` | Metadata key names registry | `id` (int), `key` (text unique) |
-| `node_props_text` | Text-valued attributes | `node_id`, `key_id`, `value` (text) |
-| `node_props_int` | Integer-valued attributes | `node_id`, `key_id`, `value` (int) |
-| `node_props_real` | Real-valued attributes | `node_id`, `key_id`, `value` (real) |
-| `node_props_bool` | Boolean-valued attributes | `node_id`, `key_id`, `value` (bool) |
-| `node_props_json` | JSON-valued attributes | `node_id`, `key_id`, `value` (json) |
+| `Symbol` | Node Table | Represents codebase elements (classes, functions, etc.). Contains `id`, `kind`, `name`, `documentation`, `location`, `content`, and `line`. |
+| `File` | Node Table | Represents physical files. Contains `id`, `name`, `content`, `documentation`. |
+| `Memory` | Node Table | Represents semantic concepts and high-level architectural knowledge. |
+| `REL_CONTAINS` | Rel Table | Relates containers to their children (e.g. `FROM File TO Symbol`, `FROM Symbol TO Symbol`). |
+| `CALLS` | Rel Table | Relates function calls between symbols or files. |
+| `HAS_METHOD` | Rel Table | Relates structural ownership (e.g. classes to methods). |
+| `IMPORTS` | Rel Table | Represents import/require dependency statements between files or symbols. |
+| `LINKS_TO` | Rel Table | Generic relationship edge linking Memory nodes to code Symbols. |
 
 > [!IMPORTANT]
-> The node's global string identifier (e.g., `src/models.rs::Node`) is stored as a text property in `node_props_text` under the key `"id"`. The `nodes` table only contains an internal auto-incrementing integer key.
+> Because Kùzu is a strictly-typed property graph database, relationship edges (REL TABLES) are strongly typed to specific Source/Target node tables.
 
 ## Cypher Querying Guide
 
-We use **Cypher** (via `graphqlite`) as the primary graph query language for retrieving relationships, code patterns, and semantic dependencies.
+We use **openCypher** via Kùzu as the primary graph query language for retrieving relationships, code patterns, and semantic dependencies.
 
 ### Common Queries & Patterns
 
@@ -136,16 +137,11 @@ We use **Cypher** (via `graphqlite`) as the primary graph query language for ret
 
 > [!WARNING]
 > **Cartesian Products:**
-> Avoid disconnected `MATCH` patterns (e.g., `MATCH (a) MATCH (b)`). Because `graphqlite` evaluates them as cross-joins, querying them on large databases will cause the query to hang or exhaust resources. Always link your patterns.
+> Avoid disconnected `MATCH` patterns (e.g., `MATCH (a) MATCH (b)`). Querying them on large databases will cause the query to hang or exhaust resources. Always explicitly link your patterns with relationships.
 
 > [!IMPORTANT]
 > **Variable-Length Path Directionality:**
-> Variable-length paths (e.g. `-[*1..3]-`) in `graphqlite` only traverse in the outgoing/defined direction, even if written without arrows. For bidirectional path search (e.g. tracing up and down a call graph), combine the incoming and outgoing paths with a `UNION`:
-> ```cypher
-> MATCH (n) WHERE n.id = 'target' MATCH (n)-[*1..2]->(x) RETURN x.id
-> UNION
-> MATCH (n) WHERE n.id = 'target' MATCH (n)<-[*1..2]-(x) RETURN x.id
-> ```
+> For bidirectional path search (e.g. tracing up and down a call graph), ensure you account for Kùzu's directional path traversal by explicitly matching both directions if necessary or using undirected queries where applicable.
 
 ## MCP Tool Guidance & Best Practices
 
