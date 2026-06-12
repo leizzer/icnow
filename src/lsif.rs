@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -690,6 +690,12 @@ fn map_symbols_to_graph(
     (bulk_nodes, bulk_edges)
 }
 
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct ImportState {
+    nodes_imported: usize,
+    edges_imported: usize,
+}
+
 pub fn parse_and_import_lsif(
     lsif_path: &str,
     db_path: &str,
@@ -711,6 +717,15 @@ pub fn parse_and_import_lsif(
 
     let conn = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e))?;
 
+    let state_file = std::path::Path::new(db_path).parent().unwrap_or(std::path::Path::new(".")).join(".icnow_import_state.json");
+    let mut state = ImportState::default();
+    if let Ok(data) = std::fs::read_to_string(&state_file) {
+        if let Ok(s) = serde_json::from_str::<ImportState>(&data) {
+            state = s;
+            tracing::info!("Resuming import from state: {} nodes, {} edges", state.nodes_imported, state.edges_imported);
+        }
+    }
+
     if !all_nodes.is_empty() {
         tracing::info!(
             "Bulk inserting {} nodes and {} edges...",
@@ -723,7 +738,7 @@ pub fn parse_and_import_lsif(
         let _ = conn.query("BEGIN TRANSACTION");
         tracing::info!("Finished BEGIN TRANSACTION");
 
-        for (id, props, label) in all_nodes {
+        for (id, props, label) in all_nodes.into_iter().skip(state.nodes_imported) {
             let mut safe_props = HashMap::new();
             let mut kind = String::new();
             for (k, v) in props {
@@ -741,14 +756,16 @@ pub fn parse_and_import_lsif(
             let _ = node.save(&conn);
             
             current_tx_nodes += 1;
+            state.nodes_imported += 1;
             if current_tx_nodes >= 50 {
                 let _ = conn.query("COMMIT");
+                let _ = std::fs::write(&state_file, serde_json::to_string(&state).unwrap_or_default());
                 current_tx_nodes = 0;
                 let _ = conn.query("BEGIN TRANSACTION");
             }
         }
         
-        for (source, target, props, label) in all_edges {
+        for (source, target, props, label) in all_edges.into_iter().skip(state.edges_imported) {
             let mut safe_props = HashMap::new();
             for (k, v) in props {
                 safe_props.insert(k, v);
@@ -763,14 +780,17 @@ pub fn parse_and_import_lsif(
             let _ = edge.save(&conn);
             
             current_tx_nodes += 1;
+            state.edges_imported += 1;
             if current_tx_nodes >= 50 {
                 let _ = conn.query("COMMIT");
+                let _ = std::fs::write(&state_file, serde_json::to_string(&state).unwrap_or_default());
                 current_tx_nodes = 0;
                 let _ = conn.query("BEGIN TRANSACTION");
             }
         }
         
         let _ = conn.query("COMMIT");
+        let _ = std::fs::remove_file(&state_file);
     }
 
     tracing::info!(
