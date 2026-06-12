@@ -138,6 +138,9 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     }
 
     for chunk in files_to_delete.chunks(50) {
+        if crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
         let _ = conn.query("BEGIN TRANSACTION");
         for path in chunk {
             let _ = delete_file_nodes(&conn, path);
@@ -146,6 +149,9 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     }
 
     for chunk in files_to_reindex.chunks(50) {
+        if crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
         let _ = conn.query("BEGIN TRANSACTION");
         for path in chunk {
             let _ = delete_file_nodes(&conn, path);
@@ -173,6 +179,9 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
 }
 
 fn handle_watcher_event(event: Event, conn: &Connection) {
+    if crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     for path in event.paths {
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             if ext != "rs" && ext != "rb" && ext != "ts" && ext != "tsx" {
@@ -244,6 +253,11 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
     let mut _active_watcher: Option<RecommendedWatcher> = None;
 
     loop {
+        if crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            continue;
+        }
+
         let conn = match crate::open_db_connection(&db_path) {
             Ok(c) => c,
             Err(e) => {
@@ -319,10 +333,16 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
                             }
                         };
                         tracing::info!("Live file watcher active for PID {}.", std::process::id());
-                        for res in rx {
-                            match res {
-                                Ok(event) => handle_watcher_event(event, &conn),
-                                Err(e) => tracing::error!("Watcher event error: {}", e),
+                        loop {
+                            if let Ok(res) = rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                                match res {
+                                    Ok(event) => {
+                                        if !crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
+                                            handle_watcher_event(event, &conn);
+                                        }
+                                    }
+                                    Err(e) => tracing::error!("watch error: {:?}", e),
+                                }
                             }
                         }
                         tracing::info!("Watcher loop thread exiting cleanly.");

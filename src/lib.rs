@@ -7,6 +7,8 @@ pub mod reconciler;
 pub mod tools;
 pub mod watcher;
 
+pub static PAUSE_WATCHER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 use lbug::{Database, Connection, SystemConfig};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};

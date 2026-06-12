@@ -399,8 +399,10 @@ WHERE l.label = 'File';
                 }
             };
 
+            crate::PAUSE_WATCHER.store(true, std::sync::atomic::Ordering::SeqCst);
             let import_res =
                 crate::lsif::parse_and_import_lsif(&actual_lsif_path, &db_path_clone, Some(&inferred_root_clone));
+            crate::PAUSE_WATCHER.store(false, std::sync::atomic::Ordering::SeqCst);
 
             if is_temp {
                 let _ = std::fs::remove_file(&actual_lsif_path);
