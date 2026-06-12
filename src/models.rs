@@ -36,8 +36,15 @@ impl Node {
         if table_name == "Symbol" {
             sets.push(format!("n.kind = '{}'", self.kind.replace("'", "''")));
         }
+        let valid_keys: Vec<&str> = match table_name {
+            "Symbol" => vec!["name", "signature", "docstring", "kind", "source_code", "file", "line"],
+            "File" => vec!["name", "kind", "last_modified"],
+            "Memory" => vec!["name", "description", "keywords"],
+            _ => vec![],
+        };
+
         for (k, v) in &self.properties {
-            if k != "id" {
+            if k != "id" && valid_keys.contains(&k.as_str()) {
                 sets.push(format!("n.{} = '{}'", k, v.replace("'", "''")));
             }
         }
