@@ -414,6 +414,13 @@ WHERE l.label = 'File';
     }
 
     #[tool(
+        description = "Returns the current version of the icnow MCP server."
+    )]
+    fn get_version(&self, _req: Parameters<GetVersionRequest>) -> Result<String, String> {
+        Ok(env!("CARGO_PKG_VERSION").to_string())
+    }
+
+    #[tool(
         description = "[EXPERIMENTAL] Retrieves a detailed memory node, its description, associated keywords, and its connections to code files/methods and sub-concepts."
     )]
     fn get_memory(&self, Parameters(req): Parameters<GetMemoryRequest>) -> Result<String, String> {
@@ -725,6 +732,9 @@ pub struct ListMemoriesRequest {
     )]
     pub project_root: Option<String>,
 }
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetVersionRequest {}
 
 #[cfg(test)]
 mod tests {
