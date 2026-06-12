@@ -377,28 +377,48 @@ WHERE l.label = 'File';
             })
             .unwrap_or_else(|| ".".to_string());
 
-        let db_path = self.resolve_db_path_and_watch(Some(&inferred_root), None, None);
+        let path_buf = std::path::Path::new(&inferred_root);
+        let db_path = path_buf.join("knowledge.db").to_string_lossy().to_string();
+        let inferred_root_clone = inferred_root.clone();
+        let db_path_clone = db_path.clone();
+        let lsif_path_opt = req.lsif_path.clone();
 
-        let (actual_lsif_path, is_temp) = match req.lsif_path {
-            Some(path) => (path, false),
-            None => {
-                let generated = crate::lsif::auto_generate_lsif(&inferred_root)
-                    .map_err(|e| format!("Auto-generation of LSIF failed: {e}"))?;
-                (generated, true)
+        tokio::task::spawn_blocking(move || {
+            ::tracing::info!("Starting background deep scan for {}", inferred_root_clone);
+            
+            let (actual_lsif_path, is_temp) = match lsif_path_opt {
+                Some(path) => (path, false),
+                None => {
+                    match crate::lsif::auto_generate_lsif(&inferred_root_clone) {
+                        Ok(generated) => (generated, true),
+                        Err(e) => {
+                            ::tracing::error!("Auto-generation of LSIF failed: {}", e);
+                            return;
+                        }
+                    }
+                }
+            };
+
+            let import_res =
+                crate::lsif::parse_and_import_lsif(&actual_lsif_path, &db_path_clone, Some(&inferred_root_clone));
+
+            if is_temp {
+                let _ = std::fs::remove_file(&actual_lsif_path);
             }
-        };
 
-        let import_res =
-            crate::lsif::parse_and_import_lsif(&actual_lsif_path, &db_path, Some(&inferred_root));
-
-        if is_temp {
-            let _ = std::fs::remove_file(&actual_lsif_path);
-        }
-
-        let (nodes, edges) = import_res.map_err(|e| format!("LSIF Import failed: {e}"))?;
+            match import_res {
+                Ok((nodes, edges)) => {
+                    ::tracing::info!("Background LSIF Import completed successfully. Nodes: {}, Edges: {}", nodes, edges);
+                }
+                Err(e) => {
+                    ::tracing::error!("Background LSIF Import failed: {}", e);
+                }
+            }
+        });
 
         Ok(format!(
-            "LSIF scan completed successfully.\n\n- **Nodes Imported**: {nodes}\n- **Edges Imported**: {edges}"
+            "Deep scan has been successfully offloaded to a background task and will be performed in chunks. The semantic graph database ({}) will incrementally populate over the next few minutes. You may continue using other tools concurrently without waiting.",
+            db_path
         ))
     }
 

@@ -719,7 +719,9 @@ pub fn parse_and_import_lsif(
         );
 
         let mut current_tx_nodes = 0;
+        tracing::info!("Starting BEGIN TRANSACTION");
         let _ = conn.query("BEGIN TRANSACTION");
+        tracing::info!("Finished BEGIN TRANSACTION");
 
         for (id, props, label) in all_nodes {
             let mut safe_props = HashMap::new();

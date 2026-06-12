@@ -5,18 +5,8 @@ fn main() {
     let conn = Connection::new(&db).unwrap();
     conn.query("CREATE NODE TABLE IF NOT EXISTS TestNode (id INT64, PRIMARY KEY(id))").unwrap();
     
-    match conn.query("BEGIN TRANSACTION") {
-        Ok(_) => println!("BEGIN TRANSACTION worked"),
-        Err(e) => println!("Error BEGIN TRANSACTION: {}", e),
-    }
-    
-    match conn.query("COMMIT") {
-        Ok(_) => println!("COMMIT worked"),
-        Err(e) => println!("Error COMMIT: {}", e),
-    }
-
-    match conn.query("BEGIN WRITE TRANSACTION") {
-        Ok(_) => println!("BEGIN WRITE TRANSACTION worked"),
-        Err(e) => println!("Error BEGIN WRITE TRANSACTION: {}", e),
-    }
+    conn.query("BEGIN TRANSACTION").unwrap();
+    let res = conn.query("MERGE (n:TestNode {id: 1})");
+    println!("MERGE result: {:?}", res.is_ok());
+    conn.query("COMMIT").unwrap();
 }
