@@ -1,6 +1,6 @@
 use crate::tools::{
-    GetFileStructureRequest, GetSymbolImplementationRequest, ListIndexedFilesRequest,
-    QueryGraphCypherRequest, QueryGraphRequest, SearchSymbolsRequest,
+    GetFileStructureRequest, GetSymbolImplementationRequest, GetSymbolInfoRequest,
+    ListIndexedFilesRequest, QueryGraphCypherRequest, QueryGraphRequest, SearchSymbolsRequest,
 };
 
 pub fn handle_query_graph(
@@ -62,4 +62,70 @@ pub fn handle_get_symbol_implementation(db_path: &str, req: GetSymbolImplementat
     }
     
     Err(format!("No implementation found for {}", req.node_id))
+}
+
+pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Result<String, String> {
+    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let node_id = req.node_id.replace("'", "''");
+    
+    let mut output = String::new();
+    
+    // 1. Get properties
+    let q_props = format!("MATCH (s:Symbol {{id: '{}'}}) RETURN s.kind AS kind, s.signature AS signature, s.docstring AS docstring", node_id);
+    match conn.query(&q_props) {
+        Ok(mut res) => {
+            if let Some(row) = res.next() {
+                output.push_str(&format!("## Symbol: {}\n", node_id));
+                output.push_str(&format!("**Kind**: {}\n", row[0].to_string()));
+                if let lbug::Value::String(sig) = &row[1] {
+                    if !sig.is_empty() { output.push_str(&format!("**Signature**: `{}`\n", sig)); }
+                }
+                if let lbug::Value::String(doc) = &row[2] {
+                    if !doc.is_empty() { output.push_str(&format!("**Docstring**: {}\n", doc)); }
+                }
+                output.push_str("\n");
+            } else {
+                return Err(format!("Symbol not found: {}", req.node_id));
+            }
+        }
+        Err(e) => return Err(format!("Failed to query properties: {e}")),
+    }
+
+    // 2. Get container
+    let q_parent = format!("MATCH (parent)-[:REL_CONTAINS]->(s:Symbol {{id: '{}'}}) RETURN label(parent) AS parent_label, parent.id AS parent_id", node_id);
+    if let Ok(mut res) = conn.query(&q_parent) {
+        if let Some(row) = res.next() {
+            output.push_str(&format!("**Container**: {} (`{}`)\n\n", row[0].to_string(), row[1].to_string()));
+        }
+    }
+
+    // 3. Get outgoing dependencies (CALLS or IMPORTS)
+    let q_out = format!("MATCH (s:Symbol {{id: '{}'}})-[r:CALLS|:IMPORTS]->(dep:Symbol) RETURN type(r) AS rel_type, dep.id AS target_id", node_id);
+    if let Ok(mut res) = conn.query(&q_out) {
+        let mut deps = Vec::new();
+        while let Some(row) = res.next() {
+            deps.push(format!("- [{}] -> `{}`", row[0].to_string(), row[1].to_string()));
+        }
+        if !deps.is_empty() {
+            output.push_str("### Outgoing Dependencies (What this symbol calls/imports)\n");
+            output.push_str(&deps.join("\n"));
+            output.push_str("\n\n");
+        }
+    }
+
+    // 4. Get incoming usages
+    let q_in = format!("MATCH (caller:Symbol)-[r:CALLS|:IMPORTS]->(s:Symbol {{id: '{}'}}) RETURN type(r) AS rel_type, caller.id AS caller_id", node_id);
+    if let Ok(mut res) = conn.query(&q_in) {
+        let mut usages = Vec::new();
+        while let Some(row) = res.next() {
+            usages.push(format!("- `{}` -> [{}]", row[1].to_string(), row[0].to_string()));
+        }
+        if !usages.is_empty() {
+            output.push_str("### Incoming Usages (What calls/imports this symbol)\n");
+            output.push_str(&usages.join("\n"));
+            output.push_str("\n\n");
+        }
+    }
+
+    Ok(output.trim().to_string())
 }

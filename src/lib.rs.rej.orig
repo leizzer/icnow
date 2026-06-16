@@ -1,0 +1,18 @@
+@@ -107,13 +107,13 @@
+         "CREATE NODE TABLE IF NOT EXISTS Symbol (id STRING, kind STRING, name STRING, documentation STRING, location STRING, content STRING, line INT64, PRIMARY KEY(id))",
+         "CREATE NODE TABLE IF NOT EXISTS File (id STRING, name STRING, content STRING, documentation STRING, PRIMARY KEY(id))",
+         "CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, name STRING, content STRING, documentation STRING, PRIMARY KEY(id))",
+-        "CREATE REL TABLE IF NOT EXISTS REL_CONTAINS (FROM Symbol TO Symbol, FROM File TO Symbol, FROM File TO File, FROM Memory TO Memory, FROM Memory TO Symbol, FROM Memory TO File)",
++        "CREATE REL TABLE IF NOT EXISTS REL_CONTAINS (FROM Symbol TO Symbol, FROM File TO Symbol, FROM File TO File, FROM Memory TO Memory, FROM Memory TO Symbol, FROM Memory TO File, FROM Symbol TO File)",
+         "CREATE REL TABLE IF NOT EXISTS HAS_METHOD (FROM Symbol TO Symbol, FROM File TO Symbol)",
+-        "CREATE REL TABLE IF NOT EXISTS CALLS (FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File)",
+-        "CREATE REL TABLE IF NOT EXISTS IMPORTS (FROM File TO File, FROM File TO Symbol)",
+-        "CREATE REL TABLE IF NOT EXISTS LINKS_TO (FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File, FROM Memory TO Memory, FROM Memory TO Symbol, FROM Memory TO File)",
++        "CREATE REL TABLE IF NOT EXISTS CALLS (FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File)",
++        "CREATE REL TABLE IF NOT EXISTS IMPORTS (FROM File TO File, FROM File TO Symbol, FROM Symbol TO File, FROM Symbol TO Symbol)",
++        "CREATE REL TABLE IF NOT EXISTS LINKS_TO (FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File, FROM Memory TO Memory, FROM Memory TO Symbol, FROM Memory TO File, FROM File TO Memory, FROM Symbol TO Memory)",
+     ];
+ 
+     for query in init_queries {
+         if let Err(e) = conn.query(query) {
+ 

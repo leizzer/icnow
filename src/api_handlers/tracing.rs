@@ -18,7 +18,12 @@ pub fn handle_trace_call_path(db_path: &str, req: TraceCallPathRequest) -> Resul
 pub fn handle_get_dependencies(db_path: &str, req: GetDependenciesRequest) -> Result<String, String> {
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
 
-    let q = format!("MATCH (s:Symbol {{id: '{}'}})-[:CALLS]->(t:Symbol) RETURN t.id AS target_id, t.name AS name, t.kind AS kind", req.node_id.replace("'", "''"));
+    let q = if req.direction == "incoming" {
+        format!("MATCH (t:Symbol)-[:CALLS|:IMPORTS]->(s:Symbol {{id: '{}'}}) RETURN t.id AS target_id, t.name AS name, t.kind AS kind", req.node_id.replace("'", "''"))
+    } else {
+        format!("MATCH (s:Symbol {{id: '{}'}})-[:CALLS|:IMPORTS]->(t:Symbol) RETURN t.id AS target_id, t.name AS name, t.kind AS kind", req.node_id.replace("'", "''"))
+    };
+    
     let mut res = conn.query(&q).map_err(|e| format!("Dependency query failed: {e}"))?;
     crate::tools::format_cypher_result(&mut res)
 }

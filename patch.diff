@@ -1,0 +1,12 @@
+--- src/lsif.rs
++++ src/lsif.rs
+@@ -719,6 +719,8 @@
+         );
+ 
+         let mut current_tx_nodes = 0;
++        tracing::info!("Starting BEGIN TRANSACTION");
+         let _ = conn.query("BEGIN TRANSACTION");
++        tracing::info!("Finished BEGIN TRANSACTION");
+ 
+         for (id, props, label) in all_nodes {
++            if current_tx_nodes == 0 { tracing::info!("Processing first node in chunk: id={}, label={}", id, label); }

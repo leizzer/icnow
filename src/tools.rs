@@ -275,6 +275,18 @@ impl GraphService {
     }
 
     #[tool(
+        description = "Returns complete 360-degree context for a single node ID. Includes its basic properties (signature, docstring), the parent container it belongs to, its outgoing dependencies (what it calls/imports), and its incoming usages (what calls it). Use this tool instead of writing complex Cypher queries to instantly understand how a symbol fits into the codebase."
+    )]
+    fn get_symbol_info(
+        &self,
+        Parameters(req): Parameters<GetSymbolInfoRequest>,
+    ) -> Result<String, String> {
+        let db_path =
+            self.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
+        queries::handle_get_symbol_info(&db_path, req)
+    }
+
+    #[tool(
         description = "Traces multi-hop call paths between a specific start_node_id and end_node_id up to a max_depth. Useful for finding how a controller reaches a specific database model or service without having to call get_dependencies repeatedly."
     )]
     fn trace_call_path(
@@ -601,6 +613,18 @@ pub struct GetDependenciesRequest {
         description = "Direction to trace: 'incoming' (find callers of this node) or 'outgoing' (find what this node calls)."
     )]
     pub direction: String,
+    #[schemars(
+        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
+    )]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetSymbolInfoRequest {
+    #[schemars(
+        description = "The node ID to retrieve 360-degree context for (e.g. 'src/main.rs::main')."
+    )]
+    pub node_id: String,
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]

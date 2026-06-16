@@ -1,0 +1,56 @@
+--- src/lib.rs
++++ src/lib.rs
+@@ -10,6 +10,8 @@
+ pub mod reconciler;
+ pub mod tools;
+ 
++pub static PAUSE_WATCHER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++
+ static DB_INSTANCE: OnceLock<Database> = OnceLock::new();
+ 
+ pub fn get_or_init_db(db_path: &str) -> &'static Database {
+--- src/watcher.rs
++++ src/watcher.rs
+@@ -140,6 +140,9 @@
+     }
+ 
+     for chunk in files_to_delete.chunks(50) {
++        if crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
++            break;
++        }
+         let _ = conn.query("BEGIN TRANSACTION");
+         for path in chunk {
+             let _ = delete_file_nodes(&conn, path);
+@@ -149,6 +152,9 @@
+     }
+ 
+     for chunk in files_to_reindex.chunks(50) {
++        if crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
++            break;
++        }
+         let _ = conn.query("BEGIN TRANSACTION");
+         for path in chunk {
+             let _ = delete_file_nodes(&conn, path);
+@@ -215,6 +221,11 @@
+     let mut _active_watcher: Option<RecommendedWatcher> = None;
+ 
+     loop {
++        if crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
++            std::thread::sleep(std::time::Duration::from_secs(5));
++            continue;
++        }
++
+         let conn = match crate::open_db_connection(&db_path) {
+             Ok(c) => c,
+             Err(e) => {
+@@ -262,6 +273,10 @@
+ 
+         if let Ok(res) = rx.recv_timeout(std::time::Duration::from_secs(5)) {
+             match res {
+                 Ok(event) => {
++                    if crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
++                        continue;
++                    }
+                     handle_watcher_event(event, &conn);
+                 }
+                 Err(e) => tracing::error!("watch error: {:?}", e),
