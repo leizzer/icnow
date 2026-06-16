@@ -51,7 +51,7 @@ Memory nodes must **only** represent **major, high-level architectural or domain
 ### ✅ DO:
 - **Focus on Big Concepts**: Only create memories for broad, domain-level boundaries that help kickstart future work.
 - **Link Key Anchors**: Link memory nodes to high-level entry points or core flow files.
-- **Kickstarting Workflow**: When starting a task in a major functional area, **always** call `search_memories` or `list_memories` first to pull the domain map.
+- **Kickstarting Workflow**: When starting a task in a major functional area, **always** call `search_memories` or `list_memories` first to pull the domain map. Note that `search_memories` uses a semantic vector search, so natural language questions like "how does login work?" are highly effective.
 
 ---
 
@@ -82,7 +82,7 @@ Memory nodes must **only** represent **major, high-level architectural or domain
 12. **`get_memory(id: String, project_root: Option<String>)`**  
     Retrieves the properties of a specific memory node along with all its direct links.
 13. **`search_memories(query: String, project_root: Option<String>)`**  
-    Searches memory nodes matching the text query.
+    Performs a semantic vector search on memory nodes using the provided natural-language query. It leverages fastembed embeddings, meaning the query does not need to exactly match keywords—it will find conceptually similar memories.
 14. **`list_memories(project_root: Option<String>)`**  
     Lists all memory nodes stored in the database.
 

@@ -39,13 +39,17 @@ impl Node {
         let valid_keys: Vec<&str> = match table_name {
             "Symbol" => vec!["name", "signature", "docstring", "kind", "source_code", "file", "line"],
             "File" => vec!["name", "kind", "last_modified"],
-            "Memory" => vec!["name", "description", "keywords"],
+            "Memory" => vec!["name", "description", "keywords", "embedding"],
             _ => vec![],
         };
 
         for (k, v) in &self.properties {
             if k != "id" && valid_keys.contains(&k.as_str()) {
-                sets.push(format!("n.{} = '{}'", k, v.replace("'", "''")));
+                if k == "embedding" {
+                    sets.push(format!("n.{} = {}", k, v));
+                } else {
+                    sets.push(format!("n.{} = '{}'", k, v.replace("'", "''")));
+                }
             }
         }
         

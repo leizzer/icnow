@@ -107,6 +107,15 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
     let keywords_str = req.keywords.join(", ");
     props.insert("keywords".to_string(), keywords_str.clone());
 
+    let text_to_embed = format!("{} {} {}", req.name, req.description, keywords_str);
+    let model = crate::get_embedding_model();
+    let mut model_lock = model.lock().unwrap();
+    let embeddings = model_lock.embed(vec![text_to_embed], None).map_err(|e| format!("Failed to generate embedding: {}", e))?;
+    if let Some(emb) = embeddings.into_iter().next() {
+        let emb_str = format!("{:?}", emb);
+        props.insert("embedding".to_string(), emb_str);
+    }
+
     let mem_node = crate::models::Node {
         id: req.id.clone(),
         label: "Memory".to_string(),
@@ -210,8 +219,16 @@ pub fn handle_search_memories(db_path: &str, req: SearchMemoriesRequest) -> Resu
     let limit = 10;
     let q_term = req.query.replace("'", "''").to_lowercase();
     
-    // Case-insensitive Cypher CONTAINS search
-    let q = format!("MATCH (m:Memory) WHERE toLower(m.name) CONTAINS '{q_term}' OR toLower(m.description) CONTAINS '{q_term}' OR toLower(m.keywords) CONTAINS '{q_term}' RETURN m.id AS id, m.name AS name, m.description AS description, m.keywords AS keywords LIMIT {limit}");
+    let model = crate::get_embedding_model();
+    let mut model_lock = model.lock().unwrap();
+    let query_embeddings = model_lock.embed(vec![req.query.clone()], None).map_err(|e| format!("Failed to generate embedding: {}", e))?;
+    let query_vector_str = if let Some(emb) = query_embeddings.into_iter().next() {
+        format!("{:?}", emb)
+    } else {
+        return Err("Failed to generate embedding vector".to_string());
+    };
+    
+    let q = format!("MATCH (m:Memory) WITH m, array_cosine_similarity(m.embedding, {}) AS sim WHERE sim > 0.3 RETURN m.id AS id, m.name AS name, m.description AS description, m.keywords AS keywords ORDER BY sim DESC LIMIT {}", query_vector_str, limit);
     
     let mut res = conn.query(&q).map_err(|e| format!("Failed to search memories: {e}"))?;
     let cols = res.get_column_names();

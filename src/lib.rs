@@ -12,8 +12,20 @@ pub static PAUSE_WATCHER: std::sync::atomic::AtomicBool = std::sync::atomic::Ato
 use lbug::{Database, Connection, SystemConfig};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
+use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
 
 static DBS: OnceLock<Mutex<HashMap<String, &'static Database>>> = OnceLock::new();
+pub static EMBEDDING_MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
+
+pub fn get_embedding_model() -> &'static Mutex<TextEmbedding> {
+    EMBEDDING_MODEL.get_or_init(|| {
+        tracing::info!("Initializing fastembed model (downloads if not present)...");
+        let options = fastembed::InitOptions::new(fastembed::EmbeddingModel::AllMiniLML6V2)
+            .with_show_download_progress(true);
+        Mutex::new(TextEmbedding::try_new(options)
+        .expect("Failed to initialize embedding model"))
+    })
+}
 
 pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
     tracing::info!("get_or_init_db called with path: {}", path);
@@ -56,7 +68,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     let node_tables = vec![
         "CREATE NODE TABLE IF NOT EXISTS Symbol (id STRING, name STRING, signature STRING, docstring STRING, kind STRING, source_code STRING, file STRING, line STRING, PRIMARY KEY(id))",
         "CREATE NODE TABLE IF NOT EXISTS File (id STRING, name STRING, kind STRING, last_modified INT64, PRIMARY KEY(id))",
-        "CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, name STRING, description STRING, keywords STRING, PRIMARY KEY(id))",
+        "CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, name STRING, description STRING, keywords STRING, embedding FLOAT[384], PRIMARY KEY(id))",
     ];
     for table in node_tables {
         let _ = conn.query(table); // Ignore errors as they might just mean table already exists

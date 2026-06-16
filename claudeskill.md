@@ -1,107 +1,97 @@
-# LLM Agent Instructions for icnow
+---
+name: icnow
+description: Triggers whenever the agent is working with source code files (e.g., Ruby, TypeScript, React, JavaScript, Rust), needs to find symbol definitions, trace method/function call paths, inspect code blocks, understand codebase architecture, or query the semantic knowledge graph.
+---
 
-This file contains instructions to inject into your LLM's system prompt or workspace context (e.g., `.cursorrules`, `claude.json`, or `.windsurfrules`). This will force the LLM to utilize the semantic knowledge graph instead of relying on inefficient native search tools.
+# `icnow` Semantic Graph Skill
+
+This skill outlines how to interact with the `icnow` MCP server to navigate the codebase using a semantic graph database. Utilizing `icnow` tools minimizes token usage, accelerates code navigation, and provides high-level architectural insight far superior to traditional recursive grepping.
 
 ---
 
-## 🛑 STRICT TOOLING RULES: USE ICNOW FIRST
+## 🛑 STRICT TOOLING RULES: THE HYBRID APPROACH IS GOLD STANDARD
 
-The `icnow` MCP server provides a pre-parsed, semantic knowledge graph of this codebase. It indexes Ruby, TypeScript, JavaScript, Rust, and other source files into a graph database. 
+**DO NOT** use `grep -r` blindly across the entire project to find definitions or references. **YOU MUST USE `icnow` TOOLS TO LOCATE THE TARGET.** 
 
-**DO NOT** use `grep`, `find`, or read entire files when you need to understand architecture, trace method calls, or find definitions. **YOU MUST USE `icnow` TOOLS INSTEAD.** Reading full files consumes too much context and `grep` is unreliable.
+However, do **NOT** stubbornly force pure Cypher string-slicing if it gets complicated. The ultimate benchmarked sweet-spot is the **Hybrid Approach**:
+1. Use `icnow` (`search_symbols`, `get_symbol_info`, `get_file_structure`) to instantly find the exact filepath and node ID.
+2. If you need to read the full file body, use the traditional native tool `view_file` on the exact path found by `icnow`. 
 
 ### 🏆 Benchmark Results & Token Savings
-Recent benchmarks show where `icnow` shines and where it falls short:
-1. **✅ WINS for structural queries (95-98% savings):** Method counts, class listings, file structures, finding definitions. Avoids reading full files. Average savings when it works is **80% token reduction**.
-2. **❌ LOSES for simple text searches (~50% worse):** Do not use `icnow` for pattern matching like `"belongs_to"`, `"def method_name"`, etc. Use `grep` or traditional search for these.
+Recent benchmarks prove:
+1. **✅ WINS for structural queries (95-98% savings):** Locating files, finding callers/callees via `get_symbol_info`, tracing dependencies. Average savings is an **80% token reduction**.
+2. **❌ LOSES for pure text extraction:** Forcing Cypher `SUBSTR()` queries to extract exact multi-line methods is brittle and prone to syntax errors. Once you know the file path via `icnow`, just use `view_file`.
+3. **❌ LOSES for simple text searches:** Do not use `icnow` for raw string pattern matching like `"belongs_to"`. Use traditional `grep_search` within a directory.
 
-### When to Use icnow:
-- **Finding Definitions**: "Find definition of symbol X" or "Where is `UserController` defined?" -> Use `search_symbols`
-- **File Outlines**: "Show me the structure of this file" or "What classes exist in this app?" -> Use `get_file_structure`
-- **Tracing Calls**: "What calls `authenticate`?" -> Use `get_dependencies`
-- **Structural Cypher Queries**: "How many methods does X have?" -> Use `query_graph_cypher`
-- **Visualizing**: "Show me a map of `app/models`" -> Use `generate_interactive_map`
+---
 
-### When to Use grep / Traditional Search:
-- Simple text pattern matching (e.g., `"belongs_to"`, `"has_many"`).
-- "Find all files containing X string".
-- Non-source code files (Markdown, JSON, Configs).
-- When you already know the exact file path and need to read the *entire* file body.
+## 💡 The "360-Degree Context" Workflow
 
-### ⚠️ DO NOT GENERALIZE FAILURES:
-- **Never assume complete failure**: If an `icnow` query fails, returns empty results, or does not provide enough context for a *specific* query or file, do NOT assume the tool or the server is broken for other symbols or future tasks.
-- **Always try `icnow` first for structural queries**: Treat each code investigation task as independent. You must *always* attempt to use `icnow` tools first for structural tasks. A single missing edge or unparsed type does not make the rest of the database invalid.
+Instead of writing complex Cypher queries to understand how a method or class fits into the codebase, rely on the dedicated `get_symbol_info` tool:
+
+1. **Locate the ID:** Call `search_symbols(query: "authenticate_user")` to find the node ID (e.g., `app/controllers/application.rb::authenticate_user`).
+2. **Get 360-Degree Context:** Immediately call `get_symbol_info(node_id: "...")`. 
+   - This returns a beautifully formatted markdown summary showing:
+     - The exact docstring and signature
+     - The parent file/class container
+     - **Incoming Usages:** Every file/method that calls *into* this node.
+     - **Outgoing Dependencies:** Every method/import this node calls *out* to.
+3. **Read Code (Optional):** If you need the exact implementation body, call `view_file` on the file path, or `get_symbol_implementation` for just that block.
+
+---
+
+## 🧠 CRITICAL MEMORY NODE RULES: HIGH-LEVEL CONCEPTS ONLY
+
+Memory nodes must **only** represent **major, high-level architectural or domain concepts** (e.g., `'payment'`, `'authentication'`, `'post review'`). 
+
+### 🚫 DO NOT:
+- Create memories for small details, individual bugs, temporary features, or single helper methods.
+- Save granular, low-level elements that require constant maintenance.
+
+### ✅ DO:
+- **Focus on Big Concepts**: Only create memories for broad, domain-level boundaries that help kickstart future work.
+- **Link Key Anchors**: Link memory nodes to high-level entry points or core flow files.
+- **Kickstarting Workflow**: When starting a task in a major functional area, **always** call `search_memories` or `list_memories` first to pull the domain map. Note that `search_memories` uses a semantic vector search, so natural language questions like "how does login work?" are highly effective.
 
 ---
 
 ## 🛠 Available Tools
 
-**`mcp__icnow__get_graph_schema`** - Returns documentation about the graph schema (available node labels, relationship types, and property keys). Useful to understand what data exists before writing queries.
-```javascript
-mcp__icnow__get_graph_schema()
-```
-
-**`mcp__icnow__search_symbols`** - **START HERE** for finding where something is defined. Searches for symbols by name/pattern across the workspace. Use `kind_filter` to reduce noise.
-```javascript
-mcp__icnow__search_symbols(query: "UserController", limit: 10, kind_filter: ["Class"])
-```
-
-**`mcp__icnow__get_symbol_implementation`** - Retrieves the raw source code block (implementation body) of a specific symbol directly from the graph database without needing to use standard file read tools.
-```javascript
-mcp__icnow__get_symbol_implementation(node_id: "src/controllers/user.rb::UserController")
-```
-
-**`mcp__icnow__get_file_structure`** - Returns a hierarchical structural outline of a file (e.g. File -> Class -> Methods). **More efficient than reading the file** when you only need to see what symbols are defined.
-```javascript
-mcp__icnow__get_file_structure(file_path: "src/main.rs")
-```
-
-**`mcp__icnow__trace_call_path`** - Traces multi-hop call paths between a specific start node and end node. Returns the exact chain of calls connecting them up to a max_depth.
-```javascript
-mcp__icnow__trace_call_path(start_node_id: "src/api.rs::endpoint", end_node_id: "src/db.rs::save")
-```
-
-**`mcp__icnow__get_dependencies`** - Traces immediate incoming (callers) or outgoing (callees) references for a specific node.
-```javascript
-// Find what calls this method (incoming)
-mcp__icnow__get_dependencies(node_id: "src/main.rs::main", direction: "incoming")
-```
-
-**`mcp__icnow__generate_interactive_map`** - Generates an interactive Cytoscape HTML map of the graph. Use this whenever the user asks for a visual representation.
-```javascript
-mcp__icnow__generate_interactive_map(output_path: "architecture.html", filter_path: "src/models")
-```
-
-**`mcp__icnow__list_indexed_files`** - Lists all files tracked in the knowledge graph.
-```javascript
-mcp__icnow__list_indexed_files()
-```
-
-**`mcp__icnow__query_graph`** - **[DEPRECATED]** Raw SQLite SQL queries are no longer supported. Always use `query_graph_cypher` instead.
-
-**`mcp__icnow__query_graph_cypher`** - Executes a graph query using Cypher syntax. **This is the primary tool** for executing custom graph traversals, node counts, or property lookups on LadybugDB.
-```cypher
-MATCH (c:Symbol {name: "User"})-[:HAS_METHOD]->(m:Symbol) RETURN m.name ORDER BY m.name
-```
-
-**`mcp__icnow__parse_project_file`** - Parses a file and adds it to the graph. Only call this if the file is new or recently modified heavily.
+1.  **`search_symbols(query: String, limit: Option<u32>, kind_filter: Option<Vec<String>>)`**  
+    Searches the graph for nodes matching a symbol name or pattern. Use `kind_filter: ["Class"]` or `["Method"]` to reduce noise.
+2.  **`get_symbol_info(node_id: String)`** 🌟 **HIGHLY RECOMMENDED** 🌟 
+    Returns complete 360-degree context for a single node ID. Includes its basic properties (signature, docstring), the parent container it belongs to, its outgoing dependencies (what it calls/imports), and its incoming usages (what calls it). Use this tool instead of writing complex Cypher queries.
+3.  **`get_symbol_implementation(node_id: String)`**  
+    Retrieves the raw source code block of a specific symbol directly from the database.
+4.  **`get_file_structure(file_path: String)`**  
+    Returns a hierarchical outline of a file.
+5.  **`get_dependencies(node_id: String, direction: String)`**  
+    Traces immediate incoming (`direction: "incoming"` for callers) or outgoing (`direction: "outgoing"` for callees) references. Note: `get_symbol_info` is usually better as it does both at once.
+6.  **`trace_call_path(start_node_id: String, end_node_id: String)`**  
+    Traces multi-hop call paths between a specific start and end node.
+7.  **`query_graph_cypher(query: String)`**  
+    Executes a graph query using Cypher syntax. Only use this for complex multi-hop logic that the predefined tools cannot handle.
+8.  **`generate_interactive_map(output_path: String, filter_path: Option<String>)`**  
+    Generates a standalone, interactive HTML Cytoscape map for visual representations.
+9.  **`list_indexed_files()`**  
+    Lists all files tracked in the knowledge graph.
+10. **`parse_project_file(file_path: String)`**  
+    Parses a file and adds it to the graph. Only call if the file is new or recently modified heavily.
+11. **`save_memory(id: String, name: String, description: String, keywords: Vec<String>, links: Vec<String>, link_type: Option<String>, project_root: Option<String>)`**  
+    Saves or updates a high-level concept memory node.
+12. **`get_memory(id: String, project_root: Option<String>)`**  
+    Retrieves the properties of a specific memory node along with all its direct links.
+13. **`search_memories(query: String, project_root: Option<String>)`**  
+    Performs a semantic vector search on memory nodes using the provided natural-language query. It leverages fastembed embeddings, meaning the query does not need to exactly match keywords—it will find conceptually similar memories.
+14. **`list_memories(project_root: Option<String>)`**  
+    Lists all memory nodes stored in the database.
 
 ---
 
-## 🔄 Recommended Workflow
+## 📊 Call Tracking (Mandatory Logging)
 
-1. **Find the Symbol**: Use `search_symbols` (with `kind_filter` if possible) to find the NodeID of a class or method.
-2. **Read the Code**: Use `get_symbol_implementation` to read the exact function or class body directly from the database!
-3. **Inspect the File**: Use `get_file_structure` to see what else lives in that file hierarchically.
-4. **Trace Usage**: Use `trace_call_path` or `get_dependencies` to see how components connect across the codebase.
-5. **Visual Maps**: If the user wants to "see" the structure, use `generate_interactive_map`.
-6. **Fallback**: Only fall back to standard `read_file` or `grep` if `icnow` fails to provide the answer.
-
----
-
-## 📊 Call Tracking (Optional Logging)
 Every time you call an `icnow` tool, you must track it in a daily CSV file at `/tmp/{day}-{month}-{year}_icnow.csv`. Append a row with the format: `call, tool_name, success, enough, why_not_enough, target_information`.
-- `success`: Was the execution technically successful?
-- `enough`: Did the graph provide enough context to prevent you from using native grep/read?
-- `why_not_enough`: Explain exactly why `icnow` was not enough and you had to fall back (e.g. "Empty search result", "Missing CALLS edge"). Use "N/A" if enough is true.
-- `target_information`: Describe what information you were trying to find in the database (e.g. "Definition of method call_webhook").
+-   `success`: Was the execution technically successful? (`true`/`false`)
+-   `enough`: Did the graph provide enough context to prevent you from using native grep/read? (`true`/`false`/`pending`)
+-   `why_not_enough`: Explain exactly why `icnow` was not enough and you had to fall back. Use `"N/A"` if enough is true.
+-   `target_information`: Describe what information you were trying to find in the database.
