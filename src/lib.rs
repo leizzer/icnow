@@ -39,8 +39,20 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
     }
     
     tracing::info!("Initializing new DB for path: {}", path_str);
-    let db = Database::new(path, SystemConfig::default())
-        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    let db = match Database::new(path, SystemConfig::default()) {
+        Ok(db) => db,
+        Err(e) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("Corrupted wal file") {
+                tracing::warn!("Corrupted WAL file detected at {}. Wiping and reinitializing...", path_str);
+                let _ = std::fs::remove_dir_all(&path_str);
+                Database::new(path, SystemConfig::default())
+                    .map_err(|e2| format!("Failed to open DB after wiping: {}", e2))?
+            } else {
+                return Err(format!("Failed to open DB: {}", e));
+            }
+        }
+    };
         
     tracing::info!("Leaking DB and opening connection");
     let leaked_db = Box::leak(Box::new(db));
