@@ -59,10 +59,10 @@ fn scan_directory(dir: &Path, files: &mut Vec<PathBuf>) {
 
 fn delete_file_nodes(conn: &Connection, file_path: &str) -> Result<()> {
     let path_esc = file_path.replace("'", "''");
+    let query_sym = format!("MATCH (f:File {{id: '{}'}})-[:REL_CONTAINS]->(s:Symbol) DETACH DELETE s", path_esc);
     let query_file = format!("MATCH (f:File {{id: '{}'}}) DETACH DELETE f", path_esc);
-    let query_sym = format!("MATCH (s:Symbol) WHERE s.id STARTS WITH '{}::' DETACH DELETE s", path_esc);
-    let _ = conn.query(&query_file);
     let _ = conn.query(&query_sym);
+    let _ = conn.query(&query_file);
     Ok(())
 }
 
