@@ -45,7 +45,9 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
             let err_msg = e.to_string();
             if err_msg.contains("Corrupted wal file") {
                 tracing::warn!("Corrupted WAL file detected at {}. Wiping and reinitializing...", path_str);
-                let _ = std::fs::remove_dir_all(&path_str);
+                let _ = std::fs::remove_file(&path_str);
+                let wal_path = format!("{}.wal", path_str);
+                let _ = std::fs::remove_file(&wal_path);
                 Database::new(path, SystemConfig::default())
                     .map_err(|e2| format!("Failed to open DB after wiping: {}", e2))?
             } else {
