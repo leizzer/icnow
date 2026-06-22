@@ -1,5 +1,5 @@
 use crate::tools::{
-    GetFileStructureRequest, GetSymbolImplementationRequest, GetSymbolInfoRequest,
+    CoverageCheckRequest, GetFileStructureRequest, GetSymbolImplementationRequest, GetSymbolInfoRequest,
     ListIndexedFilesRequest, QueryGraphCypherRequest, QueryGraphRequest, SearchSymbolsRequest,
 };
 
@@ -22,7 +22,7 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
     
     let query_param = req.query.replace("'", "''");
     
-    let mut q = format!("MATCH (n) WHERE (label(n) = 'Symbol' AND (n.name CONTAINS '{query_param}' OR n.id CONTAINS '{query_param}')) OR (label(n) = 'File' AND n.id CONTAINS '{query_param}')");
+    let mut q = format!("MATCH (n) WHERE (label(n) = 'Symbol' AND n.kind <> 'unresolved_symbol' AND (n.name CONTAINS '{query_param}' OR n.id CONTAINS '{query_param}')) OR (label(n) = 'File' AND n.id CONTAINS '{query_param}')");
     
     if let Some(filters) = &req.kind_filter {
         if !filters.is_empty() {
@@ -34,7 +34,12 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
     q.push_str(&format!(" RETURN n.id AS id, label(n) AS label, n.signature AS signature, n.docstring AS docstring LIMIT {}", limit));
     
     let mut res = conn.query(&q).map_err(|e| format!("Failed to search symbols: {e}"))?;
-    crate::tools::format_cypher_result(&mut res)
+    let result_str = crate::tools::format_cypher_result(&mut res)?;
+    
+    if result_str.trim() == "| id | label | signature | docstring |\n| --- | --- | --- | --- |" {
+        return Ok(format!("{}\n\nNo matches found. Hint: The target files might not be indexed yet or might be stale. Use the 'coverage_check' tool to verify if the relevant directories are in the graph.", result_str));
+    }
+    Ok(result_str)
 }
 
 pub fn handle_get_file_structure(db_path: &str, req: GetFileStructureRequest) -> Result<String, String> {
@@ -65,8 +70,12 @@ pub fn handle_get_symbol_implementation(db_path: &str, req: GetSymbolImplementat
 }
 
 pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Result<String, String> {
+    if req.node_id.starts_with('/') && !req.node_id.contains("::") {
+        return Err(format!("Error: '{}' is a File ID, not a Symbol ID. To view the contents or structural outline of this file, use 'get_file_structure' instead.", req.node_id));
+    }
+
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    let node_id = req.node_id.replace("'", "''");
+    let node_id = crate::models::escape_cypher_string(&req.node_id);
     
     let mut output = String::new();
     
@@ -128,4 +137,98 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     }
 
     Ok(output.trim().to_string())
+}
+
+fn scan_directory_recursively(dir: &std::path::Path, files: &mut Vec<String>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                if name != ".git" && name != "node_modules" && name != "target" && name != "vendor" {
+                    scan_directory_recursively(&path, files);
+                }
+            } else if let Some(ext) = path.extension() {
+                if ext == "rb" || ext == "rs" || ext == "ts" || ext == "tsx" {
+                    files.push(path.canonicalize().unwrap_or(path).to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+}
+
+pub fn handle_coverage_check(db_path: &str, req: CoverageCheckRequest) -> Result<String, String> {
+    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    
+    let dir_path = std::path::Path::new(&req.directory_path);
+    if !dir_path.exists() || !dir_path.is_dir() {
+        return Err(format!("Directory '{}' does not exist or is not a directory.", req.directory_path));
+    }
+
+    let mut disk_files = Vec::new();
+    scan_directory_recursively(dir_path, &mut disk_files);
+    
+    let mut indexed_count = 0;
+    let mut missing_files = Vec::new();
+    let mut stale_files = Vec::new();
+
+    for file_path in &disk_files {
+        let q = format!("MATCH (f:File {{id: '{}'}}) RETURN f.last_modified", crate::models::escape_cypher_string(file_path));
+        match conn.query(&q) {
+            Ok(mut res) => {
+                if let Some(row) = res.by_ref().next() {
+                    indexed_count += 1;
+                    if let lbug::Value::Int64(last_mod) = row[0] {
+                        if let Ok(meta) = std::fs::metadata(file_path) {
+                            if let Ok(modified) = meta.modified() {
+                                if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                                    if duration.as_secs() as i64 > last_mod {
+                                        stale_files.push(file_path.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    missing_files.push(file_path.clone());
+                }
+            }
+            Err(_) => missing_files.push(file_path.clone()),
+        }
+    }
+
+    let mut output = format!("## Coverage Report for `{}`\n", req.directory_path);
+    output.push_str(&format!("- **Total Source Files on Disk**: {}\n", disk_files.len()));
+    output.push_str(&format!("- **Indexed**: {}\n", indexed_count));
+    output.push_str(&format!("- **Missing**: {}\n", missing_files.len()));
+    output.push_str(&format!("- **Stale (Needs Re-index)**: {}\n\n", stale_files.len()));
+
+    if !missing_files.is_empty() {
+        output.push_str("### Sample Missing Files\n");
+        for f in missing_files.iter().take(10) {
+            output.push_str(&format!("- `{}`\n", f));
+        }
+        if missing_files.len() > 10 {
+            output.push_str(&format!("- ... and {} more\n", missing_files.len() - 10));
+        }
+        output.push_str("\n");
+    }
+
+    if !stale_files.is_empty() {
+        output.push_str("### Sample Stale Files\n");
+        for f in stale_files.iter().take(10) {
+            output.push_str(&format!("- `{}`\n", f));
+        }
+        if stale_files.len() > 10 {
+            output.push_str(&format!("- ... and {} more\n", stale_files.len() - 10));
+        }
+    }
+
+    if missing_files.is_empty() && stale_files.is_empty() {
+        output.push_str("✅ **All files are fully indexed and up-to-date!**\n");
+    } else {
+        output.push_str("\n> **Action Required**: Use the `deep_scan` tool on the workspace or `parse_project_file` on specific files to update the graph.");
+    }
+
+    Ok(output)
 }

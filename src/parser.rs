@@ -114,6 +114,7 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             (singleton_method name: _ @name) @function.node
             (class name: _ @name) @struct.node
             (module name: _ @name) @struct.node
+            (call method: (identifier) @macro_name arguments: (argument_list (_) @name) (#match? @macro_name "^(scope|has_many|belongs_to|has_one|validates|enum|attr_accessor|attr_reader|attr_writer)$")) @function.node
             (call method: (identifier) @import.method arguments: (argument_list (string (string_content) @name))) @import.node
             (call receiver: _ @call.receiver method: [(identifier) (constant)] @call.func) @call.node
             (call method: [(identifier) (constant)] @call.func) @call.node
@@ -171,12 +172,24 @@ fn process_function_node(
     } else if file_path.ends_with(".rb") {
         label = "Method".to_string();
         let ns = get_ruby_namespace(func_node, source_code)?;
-        let method_name = func_node
+        let mut method_name = func_node
             .child_by_field_name("name")
             .and_then(|n| n.utf8_text(source_code).ok())
-            .unwrap_or("");
+            .unwrap_or("")
+            .to_string();
+        if method_name.is_empty() {
+            method_name = name.clone();
+            // Prefix macros so they are readable, e.g. "has_many :users"
+            if kind == "call" {
+                if let Some(macro_node) = capture_map.get("macro_name") {
+                    if let Ok(m_name) = macro_node.utf8_text(source_code) {
+                        method_name = format!("{} {}", m_name, method_name);
+                    }
+                }
+            }
+        }
         name = if ns.is_empty() {
-            method_name.to_string()
+            method_name
         } else {
             format!("{ns}::{method_name}")
         };
@@ -187,12 +200,16 @@ fn process_function_node(
             "Function".to_string()
         };
         let ns = get_ts_namespace(func_node, source_code)?;
-        let func_name = func_node
+        let mut func_name = func_node
             .child_by_field_name("name")
             .and_then(|n| n.utf8_text(source_code).ok())
-            .unwrap_or("");
+            .unwrap_or("")
+            .to_string();
+        if func_name.is_empty() {
+            func_name = name.clone();
+        }
         name = if ns.is_empty() {
-            func_name.to_string()
+            func_name
         } else {
             format!("{ns}::{func_name}")
         };

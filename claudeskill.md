@@ -94,6 +94,8 @@ You **MUST** create `icnow` memories when:
     Performs a semantic vector search on memory nodes using the provided natural-language query. It leverages fastembed embeddings, meaning the query does not need to exactly match keywords—it will find conceptually similar memories.
 14. **`list_memories(project_root: Option<String>)`**  
     Lists all memory nodes stored in the database.
+15. **`coverage_check(directory_path: String, project_root: Option<String>)`**
+    Checks a directory for missing or stale files in the graph database. Run this first when you suspect an index staleness issue.
 
 ---
 

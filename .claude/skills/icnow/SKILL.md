@@ -40,17 +40,20 @@ Instead of writing complex Cypher queries to understand how a method or class fi
 
 ---
 
-## 🧠 CRITICAL MEMORY NODE RULES: HIGH-LEVEL CONCEPTS ONLY
+## 🧠 CRITICAL MEMORY NODE RULES: WHEN TO CREATE MEMORIES
 
-Memory nodes must **only** represent **major, high-level architectural or domain concepts** (e.g., `'payment'`, `'authentication'`, `'post review'`). 
+You **MUST** create `icnow` memories when:
+- You uncover a high-level **concept about the code or the project architecture**.
+- Complex **business logic** needs to be explained and mapped to the underlying code.
+- You identify major domain boundaries (e.g., `'payment processing'`, `'user authentication'`, `'post review workflow'`).
 
-### 🚫 DO NOT:
-- Create memories for small details, individual bugs, temporary features, or single helper methods.
-- Save granular, low-level elements that require constant maintenance.
+### 🚫 WHEN NOT TO CREATE ICNOW MEMORIES (DO NOT):
+- **Agent-Specific Workflows:** Do not create `icnow` memories for things that only concern the agent's internal operations (e.g., "how to use a specific bash command", "how to perform a generic action", or workflow instructions).
+- **Transient Data:** Do not save memories for small details, individual bugs, temporary features, or single helper methods.
+- **Granular Details:** Do not save low-level elements that require constant maintenance.
 
-### ✅ DO:
-- **Focus on Big Concepts**: Only create memories for broad, domain-level boundaries that help kickstart future work.
-- **Link Key Anchors**: Link memory nodes to high-level entry points or core flow files.
+### ✅ BEST PRACTICES:
+- **Link Key Anchors**: Always link memory nodes to the high-level entry points or core flow files that implement the concept.
 - **Kickstarting Workflow**: When starting a task in a major functional area, **always** call `search_memories` or `list_memories` first to pull the domain map. Note that `search_memories` uses a semantic vector search, so natural language questions like "how does login work?" are highly effective.
 
 ---

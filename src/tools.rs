@@ -244,6 +244,17 @@ impl GraphService {
     }
 
     #[tool(
+        description = "Analyzes a directory to report index staleness and coverage. Given a directory path, it recursively scans for source files (.rb, .rs, .ts) and cross-references them against the graph database. Returns a detailed report of how many files are indexed, missing, or stale (modified on disk since indexing), along with a sample list of missing/stale files. Use this BEFORE searching when you suspect files might be missing from the graph."
+    )]
+    fn coverage_check(
+        &self,
+        Parameters(req): Parameters<CoverageCheckRequest>,
+    ) -> Result<String, String> {
+        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.directory_path), None);
+        queries::handle_coverage_check(&db_path, req)
+    }
+
+    #[tool(
         description = "Generates a standalone, interactive HTML map of the knowledge graph and saves it to a specified file. The HTML file uses Cytoscape.js to visually render all files, functions, classes, and their relationships (IMPORTS, CALLS, CONTAINS). Agents should use this tool when the user asks for a visual representation of the architecture or a specific folder/file."
     )]
     fn generate_interactive_map(
@@ -633,6 +644,18 @@ pub struct GetSymbolInfoRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListIndexedFilesRequest {
+    #[schemars(
+        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
+    )]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CoverageCheckRequest {
+    #[schemars(
+        description = "The absolute path to the directory to check coverage for (e.g. '/path/to/app/services')."
+    )]
+    pub directory_path: String,
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
