@@ -87,7 +87,7 @@ You **MUST** create `icnow` memories when:
 10. **`parse_project_file(file_path: String)`**  
     Parses a file and adds it to the graph. Only call if the file is new or recently modified heavily.
 11. **`save_memory(id: String, name: String, description: String, keywords: Vec<String>, links: Vec<String>, link_type: Option<String>, project_root: Option<String>)`**  
-    Saves or updates a high-level concept memory node.
+    Saves or updates a high-level concept memory node. **NOTE:** For the `links` array, you DO NOT need to look up exact node IDs beforehand! You can just pass the class name (e.g. `"ApplicationController"`) or file name, and the server will automatically find and link it.
 12. **`get_memory(id: String, project_root: Option<String>)`**  
     Retrieves the properties of a specific memory node along with all its direct links.
 13. **`search_memories(query: String, project_root: Option<String>)`**  

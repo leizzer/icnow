@@ -36,7 +36,7 @@ pub struct MemoryListItem {
 }
 
 fn node_exists(conn: &lbug::Connection, id: &str) -> bool {
-    let q = format!("MATCH (n {{id: '{}'}}) RETURN n.id LIMIT 1", id.replace("'", "''"));
+    let q = format!("MATCH (n {{id: '{}'}}) RETURN n.id LIMIT 1", crate::models::escape_cypher_string(id));
     if let Ok(mut res) = conn.query(&q) {
         res.by_ref().next().is_some()
     } else {
@@ -96,7 +96,20 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
             if node_exists(&conn, &resolved) {
                 resolved_links.push(resolved);
             } else {
-                return Err(format!("Link target not found: '{target}' (also tried resolving to '{resolved}'). Please make sure the code node has been scanned/indexed or the memory node exists."));
+                let mut found = false;
+                let escaped_target = crate::models::escape_cypher_string(target);
+                let q_search = format!("MATCH (n) WHERE n.name = '{}' RETURN n.id LIMIT 1", escaped_target);
+                if let Ok(mut res) = conn.query(&q_search) {
+                    if let Some(row) = res.by_ref().next() {
+                        if let Value::String(matched_id) = &row[0] {
+                            resolved_links.push(matched_id.clone());
+                            found = true;
+                        }
+                    }
+                }
+                if !found {
+                    return Err(format!("Link target not found: '{target}' (also tried resolving to '{resolved}' and searching by name). Please make sure the code node has been scanned/indexed or the memory node exists."));
+                }
             }
         }
     }
@@ -124,7 +137,7 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
     };
     mem_node.save(&conn).map_err(|e| format!("Failed to save memory node: {e}"))?;
 
-    let q_delete_links = format!("MATCH (m:Memory {{id: '{}'}})-[r]->() DELETE r", req.id.replace("'", "''"));
+    let q_delete_links = format!("MATCH (m:Memory {{id: '{}'}})-[r]->() DELETE r", crate::models::escape_cypher_string(&req.id));
     let _ = conn.query(&q_delete_links);
 
     for target_id in &resolved_links {
@@ -152,7 +165,7 @@ pub fn handle_get_memory(db_path: &str, req: GetMemoryRequest) -> Result<String,
 
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
 
-    let q = format!("MATCH (m:Memory {{id: '{}'}}) RETURN m.name AS name, m.description AS description, m.keywords AS keywords", req.id.replace("'", "''"));
+    let q = format!("MATCH (m:Memory {{id: '{}'}}) RETURN m.name AS name, m.description AS description, m.keywords AS keywords", crate::models::escape_cypher_string(&req.id));
     let mut res = conn.query(&q).map_err(|e| format!("Failed to query memory: {e}"))?;
 
     let cols = res.get_column_names();
@@ -165,7 +178,7 @@ pub fn handle_get_memory(db_path: &str, req: GetMemoryRequest) -> Result<String,
     let description = get_str(&row, &cols, "description");
     let keywords = get_str(&row, &cols, "keywords");
 
-    let l_q = format!("MATCH (m:Memory {{id: '{}'}})-[r]->(target) RETURN target.id AS target_id, target.name AS target_name, struct_extract(r, '_LABEL') AS rel_type, label(target) AS target_labels", req.id.replace("'", "''"));
+    let l_q = format!("MATCH (m:Memory {{id: '{}'}})-[r]->(target) RETURN target.id AS target_id, target.name AS target_name, struct_extract(r, '_LABEL') AS rel_type, label(target) AS target_labels", crate::models::escape_cypher_string(&req.id));
     let mut sub_concepts = Vec::new();
     let mut code_nodes = Vec::new();
 
@@ -217,7 +230,6 @@ pub fn handle_search_memories(db_path: &str, req: SearchMemoriesRequest) -> Resu
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
     
     let limit = 10;
-    let q_term = req.query.replace("'", "''").to_lowercase();
     
     let model = crate::get_embedding_model();
     let mut model_lock = model.lock().unwrap();

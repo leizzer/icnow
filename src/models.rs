@@ -23,6 +23,15 @@ pub struct Node {
     pub properties: HashMap<String, String>,
 }
 
+pub fn escape_cypher_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
 impl Node {
     pub fn save(&self, conn: &Connection) -> anyhow::Result<()> {
         let table_name = match self.label.as_str() {
@@ -31,10 +40,10 @@ impl Node {
             _ => "Symbol",
         };
         
-        let mut query = format!("MERGE (n:{} {{id: '{}'}})", table_name, self.id.replace("'", "''"));
+        let mut query = format!("MERGE (n:{} {{id: '{}'}})", table_name, escape_cypher_string(&self.id));
         let mut sets = vec![];
         if table_name == "Symbol" {
-            sets.push(format!("n.kind = '{}'", self.kind.replace("'", "''")));
+            sets.push(format!("n.kind = '{}'", escape_cypher_string(&self.kind)));
         }
         let valid_keys: Vec<&str> = match table_name {
             "Symbol" => vec!["name", "signature", "docstring", "kind", "source_code", "file", "line"],
@@ -48,7 +57,7 @@ impl Node {
                 if k == "embedding" {
                     sets.push(format!("n.{} = {}", k, v));
                 } else {
-                    sets.push(format!("n.{} = '{}'", k, v.replace("'", "''")));
+                    sets.push(format!("n.{} = '{}'", k, escape_cypher_string(v)));
                 }
             }
         }
@@ -87,7 +96,7 @@ pub struct Edge {
 
 fn get_node_label(conn: &Connection, id: &str) -> Option<String> {
     for label in &["File", "Symbol", "Memory"] {
-        let q = format!("MATCH (n:{} {{id: '{}'}}) RETURN n.id LIMIT 1", label, id.replace("'", "''"));
+        let q = format!("MATCH (n:{} {{id: '{}'}}) RETURN n.id LIMIT 1", label, escape_cypher_string(id));
         if let Ok(mut res) = conn.query(&q) {
             if res.by_ref().next().is_some() {
                 return Some(label.to_string());
@@ -131,9 +140,9 @@ impl Edge {
         let query = format!(
             "MATCH (s:{} {{id: '{}'}}), (t:{} {{id: '{}'}}) MERGE (s)-[:{}]->(t)",
             src_label,
-            self.source.replace("'", "''"),
+            escape_cypher_string(&self.source),
             tgt_label,
-            self.target.replace("'", "''"),
+            escape_cypher_string(&self.target),
             rel_table
         );
 

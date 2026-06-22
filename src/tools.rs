@@ -437,7 +437,7 @@ WHERE l.label = 'File';
     }
 
     #[tool(
-        description = "[EXPERIMENTAL] Creates or updates a memory node representing a high-level concept or business logic flow, linking it to code nodes or other memory nodes. Enforces prefix 'memory::' and validates that all link targets exist in the database."
+        description = "[EXPERIMENTAL] Creates or updates a memory node representing a high-level concept or business logic flow, linking it to code nodes or other memory nodes. Enforces prefix 'memory::'. For the `links` array, you DO NOT need exact node IDs! You can simply pass the exact class name (e.g. 'ApplicationController') or file name, and the server will automatically resolve it to the correct Node ID."
     )]
     fn save_memory(
         &self,
