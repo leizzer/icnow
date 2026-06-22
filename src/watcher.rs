@@ -137,7 +137,7 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
         }
     }
 
-    for chunk in files_to_delete.chunks(50) {
+    for chunk in files_to_delete.chunks(10) {
         if crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
             break;
         }
@@ -148,7 +148,7 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
         let _ = conn.query("COMMIT");
     }
 
-    for chunk in files_to_reindex.chunks(50) {
+    for chunk in files_to_reindex.chunks(10) {
         if crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
             break;
         }

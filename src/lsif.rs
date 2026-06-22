@@ -757,7 +757,7 @@ pub fn parse_and_import_lsif(
             
             current_tx_nodes += 1;
             state.nodes_imported += 1;
-            if current_tx_nodes >= 50 {
+            if current_tx_nodes >= 10 {
                 let _ = conn.query("COMMIT");
                 let _ = std::fs::write(&state_file, serde_json::to_string(&state).unwrap_or_default());
                 current_tx_nodes = 0;
@@ -781,7 +781,7 @@ pub fn parse_and_import_lsif(
             
             current_tx_nodes += 1;
             state.edges_imported += 1;
-            if current_tx_nodes >= 50 {
+            if current_tx_nodes >= 10 {
                 let _ = conn.query("COMMIT");
                 let _ = std::fs::write(&state_file, serde_json::to_string(&state).unwrap_or_default());
                 current_tx_nodes = 0;
