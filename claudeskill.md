@@ -79,7 +79,31 @@ You **MUST** create `icnow` memories when:
 
 ---
 
-## 🛠️ 6. The Tool Arsenal
+## 📝 6. Cypher Query Examples (`query_graph_cypher`)
+
+When using `query_graph_cypher`, remember that nodes are either `Symbol` or `File`. `Symbol` nodes have a `kind` property (e.g., `'Method'`, `'Class'`, `'Macro'`, `'Variable'`, `'Import'`).
+
+**Example 1: Count all methods inside a specific file**
+```cypher
+MATCH (f:File {id: '/Users/path/to/app/models/user.rb'})-[:REL_CONTAINS]->(m:Symbol {kind: 'Method'})
+RETURN count(m)
+```
+
+**Example 2: Find all classes that inherit from `ApplicationRecord`**
+```cypher
+MATCH (c:Symbol {kind: 'Class'})-[:CALLS]->(p:Symbol {name: 'ApplicationRecord'})
+RETURN c.id, c.name
+```
+
+**Example 3: Find all files that import a specific module**
+```cypher
+MATCH (f:File)-[:IMPORTS]->(i:Symbol {name: 'react'})
+RETURN f.id
+```
+
+---
+
+## 🛠️ 7. The Tool Arsenal
 
 1.  **`search_symbols(query: String, limit: Option<u32>, kind_filter: Option<Vec<String>>)`**  
     Searches the graph for nodes matching a symbol name. Use `kind_filter: ["Class"]` or `["Method"]` to reduce noise. Artificial unresolved nodes are filtered out automatically.

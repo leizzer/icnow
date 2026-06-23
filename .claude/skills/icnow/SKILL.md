@@ -11,46 +11,54 @@ By using `icnow`, you can navigate massive projects with **95% fewer tokens** an
 
 ---
 
-## 🛑 1. Strict Rules of Engagement: The Hybrid Approach
+## 🧠 1. The Graph Architecture
+
+Before using the tools, you must understand how the code is modeled:
+
+- **Nodes**:
+  - `File`: Represents a physical file.
+  - `Symbol`: Represents a code construct. Key `kind`s include: `Class`, `Method`, `Macro` (e.g., Rails `has_many`, `scope`), `Struct`, `Variable`, and `Import`.
+  - `Unresolved`: Call-site placeholders used to track method invocations before linking.
+- **Edges**:
+  - `REL_CONTAINS`: Links a `File` or `Class` to the `Symbols` it defines.
+  - `CALLS`: Links a caller `Symbol` to the target it invokes. Includes exact `file` and `line` metadata.
+  - `IMPORTS`: Links a file/symbol to a dependency.
+
+> **Crucial Advantage:** Because `icnow` natively isolates `Method` nodes from `Macro` nodes, you can run exact counts (e.g., "How many methods in user.rb?") using Cypher without ever having to manually filter out `has_many` or `attr_accessor` noise!
+
+---
+
+## 🛑 2. Strict Rules of Engagement: The Hybrid Approach
 
 **DO NOT** use `grep -r` blindly across the entire project to find definitions or references. **YOU MUST USE `icnow` TOOLS TO LOCATE THE TARGET.**
 
-However, do **NOT** stubbornly force `icnow` if it's missing data. The ultimate benchmarked sweet-spot is the **Hybrid Approach**:
-1. **Find it via Graph**: Use `search_symbols` to instantly find the exact filepath.
-2. **Context via Graph**: Use `get_symbol_info` to find callers, dependencies, and methods.
-3. **Read it via Terminal**: If you need to read the full file body, use the traditional native tool `view_file` on the exact path found by `icnow`.
+However, do **NOT** stubbornly force pure Cypher string-slicing if you just need to read a method. The ultimate benchmarked sweet-spot is the **Hybrid Approach**:
+1. **Find it via Graph**: Use `search_symbols` or `get_symbol_info` to instantly find the exact filepath, dependencies, and incoming calls.
+2. **Read it via Terminal**: If you need to read the full file body, use the traditional native tool `view_file` on the exact path found by `icnow`.
 
 ### 🏆 Benchmark Proven:
-- **✅ WINS for structural queries (95% token savings):** Locating files, finding all callers/callees via `get_symbol_info`, counting methods in a file.
-- **❌ LOSES for pure text extraction:** Once you know the path, just use `view_file`.
+- **✅ WINS for structural queries (95% token savings):** Locating files, finding all callers/callees via `get_symbol_info`, counting methods, tracing dependencies.
+- **❌ LOSES for pure text extraction:** Forcing Cypher to extract multi-line methods is brittle. Once you know the path, just use `view_file` or `get_symbol_implementation`.
 - **❌ LOSES for simple exact string matches:** Do not use `icnow` for raw string pattern matching (e.g., finding the string `"TODO"`). Use `grep_search`.
 
 ---
 
-## 💡 2. The Golden Workflows
+## 💡 3. The "360-Degree Context" Workflow
 
-### Scenario A: Finding a Method Definition and its Context
+Instead of writing complex Cypher queries to understand how a method or class fits into the codebase, rely on the dedicated `get_symbol_info` tool. It perfectly aggregates all unresolved call-site edges to give you a complete picture.
+
 1. **Locate the ID:** Call `search_symbols(query: "authenticate_user")` to find the node ID (e.g., `app/controllers/application.rb::authenticate_user`).
 2. **Get 360-Degree Context:** Call `get_symbol_info(node_id: "...")`. 
-   - This returns a beautifully formatted summary showing the exact docstring, signature, **Incoming Usages** (callers), **Outgoing Dependencies**, and **Contains** (methods/children with an exact count!).
+   - This returns a beautifully formatted summary showing:
+     - The exact docstring and signature
+     - The parent file/class container
+     - **Incoming Usages:** Every file/method that calls *into* this node, complete with exact `file:line` metadata.
+     - **Outgoing Dependencies:** Every method/import this node calls *out* to.
 3. **Read Code (Optional):** If you need the exact implementation body, call `view_file` on the file path.
-
-### Scenario B: 0-Result Fallback (The Missing File)
-If `search_symbols` returns 0 results:
-1. **DO NOT** guess file paths and try to `parse_project_file`.
-2. **DO NOT** write Cypher queries.
-3. **DO** use the traditional `grep_search` terminal tool to find the definition in the codebase.
-4. Once you find the file path via grep, run `parse_project_file(file_path)` to index it, then proceed.
-
-### Scenario C: Finding Callers of Dynamic/Metaprogrammed Methods
-If you search for a symbol (like `audit_log`) and `search_symbols` returns many rows with `unresolved_symbol` (e.g., `/path/to/user.rb::unresolved_call_10`):
-1. **THESE ARE THE CALL SITES!** Tree-sitter creates `unresolved_symbol` placeholders when it encounters a method call whose definition it cannot statically link (like Rails metaprogramming).
-2. Look at the `id` property of those unresolved symbols. It tells you exactly the file path and the line number where the call occurred.
-3. **DO NOT** try to `get_symbol_info` on the unresolved symbols. You already have the file and line number—just use `view_file` to look at it if needed!
 
 ---
 
-## 🛡️ 3. Preventing Staleness: The Coverage Check
+## 🛡️ 4. Preventing Staleness: The Coverage Check
 
 The graph is only as good as its data. If files are heavily modified or un-indexed, the graph becomes stale.
 - **Always run `coverage_check(directory_path)`** when starting work in a specific folder. It will instantly tell you which files are missing from the graph or out of date.
@@ -58,26 +66,77 @@ The graph is only as good as its data. If files are heavily modified or un-index
 
 ---
 
-## 🛠️ 4. The 6 Core Tools
+## 🧠 5. Creating Memories
 
-We have intentionally restricted the `icnow` MCP to only the 6 most powerful tools to eliminate decision paralysis. **Do not attempt to use any other icnow tools (no Cypher, no Memory tools).**
+You **MUST** create `icnow` memories when:
+- You uncover a high-level **concept about the project architecture** or complex **business logic**.
+- You identify major domain boundaries (e.g., `'payment processing'`, `'user authentication'`).
 
-1.  **`search_symbols(query: String, limit: Option<u32>, kind_filter: Option<Vec<String>>)`**  
-    Searches the graph for nodes matching a symbol name. 
-2.  **`get_symbol_info(node_id: String)`** 🌟 **THE MASTER TOOL** 🌟 
-    Returns complete context for a node ID. Includes incoming usages, outgoing dependencies, and explicitly lists all methods/children contained inside it (with an exact count so you don't have to count manually).
-3.  **`parse_project_file(file_path: String)`**  
-    Parses a file and adds it to the graph. Only call if `coverage_check` shows it is missing or out-of-date, or if `search_symbols` yielded 0 results and you manually found the file with `grep`.
-4.  **`coverage_check(directory_path: String, project_root: Option<String>)`**
-    Checks a directory for missing or stale files in the database. Run this first when you suspect staleness.
-5.  **`deep_scan(project_root: Option<String>, compiler_flags: Option<String>)`**  
-    Runs a full background indexing job for the entire project. This takes time, so only use it if the user requests a full rebuild.
-6.  **`list_indexed_files(project_root: Option<String>)`**  
-    Lists all files tracked in the knowledge graph.
+**Rules:**
+- **Link Key Anchors**: Always link memory nodes to the high-level classes or files that implement the concept. (e.g., passing `"ApplicationController"` in the `links` array will automatically resolve to the node).
+- **Transient Data**: Do NOT save memories for granular details, individual bugs, or single helper methods.
+- **Kickstarting Workflow**: Always call `search_memories(query)` when starting a task to pull the domain map. It uses semantic vector search, so natural language works perfectly.
 
 ---
 
-## 📊 5. Call Tracking (Mandatory Logging)
+## 📝 6. Cypher Query Examples (`query_graph_cypher`)
+
+When using `query_graph_cypher`, remember that nodes are either `Symbol` or `File`. `Symbol` nodes have a `kind` property (e.g., `'Method'`, `'Class'`, `'Macro'`, `'Variable'`, `'Import'`).
+
+**Example 1: Count all methods inside a specific file**
+```cypher
+MATCH (f:File {id: '/Users/path/to/app/models/user.rb'})-[:REL_CONTAINS]->(m:Symbol {kind: 'Method'})
+RETURN count(m)
+```
+
+**Example 2: Find all classes that inherit from `ApplicationRecord`**
+```cypher
+MATCH (c:Symbol {kind: 'Class'})-[:CALLS]->(p:Symbol {name: 'ApplicationRecord'})
+RETURN c.id, c.name
+```
+
+**Example 3: Find all files that import a specific module**
+```cypher
+MATCH (f:File)-[:IMPORTS]->(i:Symbol {name: 'react'})
+RETURN f.id
+```
+
+---
+
+## 🛠️ 7. The Tool Arsenal
+
+1.  **`search_symbols(query: String, limit: Option<u32>, kind_filter: Option<Vec<String>>)`**  
+    Searches the graph for nodes matching a symbol name. Use `kind_filter: ["Class"]` or `["Method"]` to reduce noise. Artificial unresolved nodes are filtered out automatically.
+2.  **`get_symbol_info(node_id: String)`** 🌟 **HIGHLY RECOMMENDED** 🌟 
+    Returns complete 360-degree context for a single node ID. Includes incoming usages (with file:line accuracy) and outgoing dependencies.
+3.  **`coverage_check(directory_path: String, project_root: Option<String>)`**
+    Checks a directory for missing or stale files in the database. Run this first when you suspect staleness.
+4.  **`get_symbol_implementation(node_id: String)`**  
+    Retrieves the raw source code block of a specific symbol directly from the database.
+5.  **`get_file_structure(file_path: String)`**  
+    Returns a hierarchical outline of a file, perfectly separating `Methods`, `Macros`, and `Classes`.
+6.  **`parse_project_file(file_path: String)`**  
+    Parses a file and adds it to the graph. Only call if `coverage_check` shows it is missing or out-of-date.
+7.  **`query_graph_cypher(query: String)`**  
+    Executes a Kuzu Graph query using Cypher syntax (SQLite is NOT supported). Use this for custom aggregations (e.g., `MATCH (m:Symbol {kind: 'Method'}) RETURN count(m)`).
+8.  **`trace_call_path(start_node_id: String, end_node_id: String)`**  
+    Traces multi-hop call paths between a specific start and end node.
+9.  **`generate_interactive_map(output_path: String, filter_path: Option<String>)`**  
+    Generates a standalone, interactive HTML Cytoscape map for visual representations.
+10. **`list_indexed_files()`**  
+    Lists all files tracked in the knowledge graph.
+11. **`save_memory(id: String, name: String, description: String, keywords: Vec<String>, links: Vec<String>, link_type: Option<String>, project_root: Option<String>)`**  
+    Saves a high-level concept memory node. 
+12. **`get_memory(id: String, project_root: Option<String>)`**  
+    Retrieves the properties of a specific memory node along with all its direct links.
+13. **`search_memories(query: String, project_root: Option<String>)`**  
+    Performs a semantic vector search on memory nodes.
+14. **`list_memories(project_root: Option<String>)`**  
+    Lists all memory nodes stored in the database.
+
+---
+
+## 📊 7. Call Tracking (Mandatory Logging)
 
 Every time you call an `icnow` tool, you must track it in a daily CSV file at `/tmp/{day}-{month}-{year}_icnow.csv`. Append a row with the format: `call, tool_name, success, enough, why_not_enough, target_information`.
 -   `success`: Was the execution technically successful? (`true`/`false`)
