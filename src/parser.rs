@@ -170,7 +170,7 @@ fn process_function_node(
             }
         }
     } else if file_path.ends_with(".rb") {
-        label = "Method".to_string();
+        label = if kind == "call" { "Macro".to_string() } else { "Method".to_string() };
         let ns = get_ruby_namespace(func_node, source_code)?;
         let mut method_name = func_node
             .child_by_field_name("name")
@@ -400,13 +400,17 @@ fn process_call_node(
 
     if !enclosing_func_name.is_empty() {
         let source_id = format!("{file_path}::{enclosing_func_name}");
+        let line = call_node.start_position().row + 1;
+        let target_id = format!("{}::unresolved_call_{}", file_path, line);
 
         let mut props = HashMap::new();
         props.insert("name".to_string(), target_name.clone());
         props.insert("kind".to_string(), "unresolved_symbol".to_string());
-        bulk_nodes.push((target_name.clone(), props, "Unresolved".to_string()));
+        props.insert("file".to_string(), file_path.to_string());
+        props.insert("line".to_string(), line.to_string());
+        bulk_nodes.push((target_id.clone(), props, "Unresolved".to_string()));
 
-        bulk_edges.push((source_id, target_name, HashMap::new(), "CALLS".to_string()));
+        bulk_edges.push((source_id, target_id, HashMap::new(), "CALLS".to_string()));
     }
 
     Ok(())
@@ -594,7 +598,7 @@ pub fn parse_file_in_memory(
                     .entry(node.label.clone())
                     .or_default()
                     .push(node.name.clone());
-            } else if node.label == "Method" || node.label == "Function" {
+            } else if node.label == "Method" || node.label == "Function" || node.label == "Macro" {
                 if let Some((struct_part, method_part)) = node.name.rsplit_once("::") {
                     summary
                         .methods

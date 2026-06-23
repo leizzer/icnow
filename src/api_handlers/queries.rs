@@ -79,8 +79,10 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     
     let mut output = String::new();
     
+    let mut symbol_name = String::new();
+    
     // 1. Get properties
-    let q_props = format!("MATCH (s:Symbol {{id: '{}'}}) RETURN s.kind AS kind, s.signature AS signature, s.docstring AS docstring", node_id);
+    let q_props = format!("MATCH (s:Symbol {{id: '{}'}}) RETURN s.kind AS kind, s.signature AS signature, s.docstring AS docstring, s.name AS name", node_id);
     match conn.query(&q_props) {
         Ok(mut res) => {
             if let Some(row) = res.next() {
@@ -91,6 +93,9 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
                 }
                 if let lbug::Value::String(doc) = &row[2] {
                     if !doc.is_empty() { output.push_str(&format!("**Docstring**: {}\n", doc)); }
+                }
+                if let lbug::Value::String(name_val) = &row[3] {
+                    symbol_name = name_val.clone();
                 }
                 output.push_str("\n");
             } else {
@@ -123,11 +128,29 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     }
 
     // 4. Get incoming usages
-    let q_in = format!("MATCH (caller:Symbol)-[r:CALLS|:IMPORTS]->(s:Symbol {{id: '{}'}}) RETURN type(r) AS rel_type, caller.id AS caller_id", node_id);
+    let base_name = symbol_name.split("::").last().unwrap_or(&symbol_name);
+    let dot_base = format!(".{}", base_name);
+    let colon_base = format!("::{}", base_name);
+
+    let q_in = format!(
+        "MATCH (caller:Symbol)-[r:CALLS|:IMPORTS]->(t:Symbol) 
+         WHERE t.id = '{node_id}' 
+         OR (t.kind = 'unresolved_symbol' AND type(r) = 'CALLS' AND (t.name = '{base_name}' OR t.name ENDS WITH '{dot_base}' OR t.name ENDS WITH '{colon_base}')) 
+         RETURN type(r) AS rel_type, caller.id AS caller_id, t.file AS file, t.line AS line LIMIT 100"
+    );
     if let Ok(mut res) = conn.query(&q_in) {
         let mut usages = Vec::new();
         while let Some(row) = res.next() {
-            usages.push(format!("- `{}` -> [{}]", row[1].to_string(), row[0].to_string()));
+            let rel_type = row[0].to_string();
+            let caller_id = row[1].to_string();
+            let file = if let lbug::Value::String(f) = &row[2] { f.clone() } else { String::new() };
+            let line = if let lbug::Value::String(l) = &row[3] { l.clone() } else { String::new() };
+            
+            if !file.is_empty() && !line.is_empty() {
+                usages.push(format!("- `{}` -> [{}] at {}:{}", caller_id, rel_type, file, line));
+            } else {
+                usages.push(format!("- `{}` -> [{}]", caller_id, rel_type));
+            }
         }
         if !usages.is_empty() {
             output.push_str("### Incoming Usages (What calls/imports this symbol)\n");
