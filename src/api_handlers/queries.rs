@@ -31,7 +31,7 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
         }
     }
     
-    q.push_str(&format!(" RETURN n.id AS id, label(n) AS label, n.signature AS signature, n.docstring AS docstring LIMIT {}", limit));
+    q.push_str(&format!(" RETURN n.id AS id, n.kind AS label, n.signature AS signature, n.docstring AS docstring LIMIT {}", limit));
     
     let mut res = conn.query(&q).map_err(|e| format!("Failed to search symbols: {e}"))?;
     let result_str = crate::tools::format_cypher_result(&mut res)?;
