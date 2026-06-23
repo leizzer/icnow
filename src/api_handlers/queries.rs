@@ -313,7 +313,9 @@ pub fn handle_coverage_check(db_path: &str, req: CoverageCheckRequest) -> Result
     if missing_files.is_empty() && stale_files.is_empty() {
         output.push_str("✅ **All files are fully indexed and up-to-date!**\n");
     } else {
-        output.push_str("\n> **Action Required**: Use the `deep_scan` tool on the workspace or `parse_project_file` on specific files to update the graph.");
+        output.push_str("\n> **Action Required**: You have missing or stale files!\n");
+        output.push_str("> 1. **Quick/One-off queries:** It may be faster to just use traditional tools (like `grep` or `read_file`) on these un-indexed files instead of paying the indexing cost.\n");
+        output.push_str("> 2. **Structural graph queries:** If you need to trace callers or find subclasses, use the `parse_project_file` tool on these specific missing files. This forces `icnow` to bypass external LSIF indexers and use its internal 100% accurate Tree-sitter parser to add them to the graph!");
     }
 
     Ok(output)
