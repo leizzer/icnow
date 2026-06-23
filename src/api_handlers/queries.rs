@@ -165,6 +165,23 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
         }
     }
 
+    // 5. Get children (CONTAINS or HAS_METHOD)
+    let q_children = format!("MATCH (s:Symbol {{id: '{}'}})-[r:REL_CONTAINS|:HAS_METHOD]->(child:Symbol) RETURN type(r) AS rel_type, child.id AS child_id, child.kind AS child_kind", node_id);
+    if let Ok(mut res) = conn.query(&q_children) {
+        let mut children = Vec::new();
+        while let Some(row) = res.next() {
+            let _rel = row[0].to_string();
+            let c_id = row[1].to_string();
+            let c_kind = row[2].to_string();
+            children.push(format!("- `{}` ({})", c_id, c_kind));
+        }
+        if !children.is_empty() {
+            output.push_str(&format!("### Contains ({} items)\n", children.len()));
+            output.push_str(&children.join("\n"));
+            output.push_str("\n\n");
+        }
+    }
+
     Ok(output.trim().to_string())
 }
 
