@@ -83,7 +83,7 @@ Add the following to your MCP `config.json`:
 
 ```bash
 # 3 — See the savings
-# Ask your AI: "List the subclasses of BasePolicy using icnow"
+# Ask your AI: "List the subclasses of BaseHandler using icnow"
 ```
 
 ## Proof
@@ -96,7 +96,7 @@ Add the following to your MCP `config.json`:
 | Inheritance hierarchy list    | `icnow` | **1.2s** |   ~85 | **92%** fewer tokens, **82x** faster |
 | Overloaded symbol disambig.   | `icnow` | **1.5s** |  ~110 | **92%** fewer tokens, **32x** faster |
 
-Reproduced across a 3-task, multi-trial benchmark orchestrated natively on Ruby on Rails. Instead of wasting 130+ seconds writing parsing scripts and paginating regex search results, `icnow` retrieves the answer via absolute edges instantly.
+Reproduced across a 3-task, multi-trial benchmark orchestrated natively on a large production codebase. Instead of wasting 130+ seconds writing parsing scripts and paginating regex search results, `icnow` retrieves the answer via absolute edges instantly.
 
 ## Agent compatibility matrix
 
@@ -133,7 +133,7 @@ LIMIT 10
 **Find Callers of a Function:**
 ```cypher
 MATCH (caller)-[r:CALLS]->(callee)
-WHERE callee.id = 'app/models/user.rb::User#full_name'
+WHERE callee.id = 'src/auth/user.ts::User#verify_token'
 RETURN caller.id, label(r)
 ```
 
@@ -150,7 +150,7 @@ RETURN dep.id
 
 ### Nodes
 Nodes represent files, functions, classes, models, or imports.
-- **`id`**: Must be a globally unique string (e.g., `src/models.rs::Node` or `app/models/user.rb::User`).
+- **`id`**: Must be a globally unique string (e.g., `src/models.rs::Node` or `src/auth/user.ts::User`).
 - **`label`**: The domain-level type (e.g., `Function`, `Struct`, `File`, `Model`).
 - **`kind`**: The specific AST syntax item (e.g., `function_item`, `class_declaration`).
 
