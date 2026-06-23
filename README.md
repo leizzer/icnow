@@ -8,7 +8,7 @@
       The code knowledge graph MCP server for AI agents
 </pre></div>
 
-<p align="center"><strong>10–80x faster codebase traversal · Rust · LadybugDB · AST parsing · Local-first · Zero-config</strong></p>
+<p align="center"><strong>10–80x faster codebase traversal · Rust · Ladybug · AST parsing · Local-first · Zero-config</strong></p>
 
 <p align="center">
   <a href="https://crates.io/crates/icnow"><img src="https://img.shields.io/crates/v/icnow.svg" alt="Crates.io"></a>
@@ -30,7 +30,7 @@
 
 - **MCP server** — Native Model Context Protocol server exposing `search_symbols`, `get_symbol_info`, `deep_scan`, and `query_graph_cypher`.
 - **AST Parsing** — Tree-sitter natively extracts functions, classes, and imports across Rust, Ruby, TypeScript, and more—with zero external toolchain dependencies.
-- **Graph Database** — Kùzu (LadybugDB) powers lightning-fast openCypher edge traversals.
+- **Graph Database** — Ladybug powers lightning-fast openCypher edge traversals.
 - **Replaces Grep** — Agents query structured edges (`CALLS`, `INHERITS`, `IMPORTS`) instead of hallucinating regexes.
 - **Isolated & Local** — Stores `knowledge.db` entirely locally inside your project root. 
 
@@ -47,7 +47,7 @@
     │  DeepScan  →  Tree-sitter AST  →  knowledge.db     │
     │                    ├─ Node Extraction (Symbols)    │
     │                    ├─ Edge Resolution (Imports)    │
-    │                    └─ Kùzu Graph Engine            │
+    │                    └─ Ladybug Graph Engine         │
     │                                                    │
     │  search_symbols · get_symbol_info · query_graph    │
     └────────────────────────────────────────────────────┘
@@ -121,7 +121,7 @@ Reproduced across a 3-task, multi-trial benchmark orchestrated natively on Ruby 
 <details>
 <summary><b>Cypher Querying Guide</b></summary>
 
-We use **openCypher** via Kùzu as the primary graph query language for retrieving relationships, code patterns, and semantic dependencies.
+We use **openCypher** via Ladybug as the primary graph query language for retrieving relationships, code patterns, and semantic dependencies.
 
 **List Classes and Their Methods:**
 ```cypher
