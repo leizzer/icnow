@@ -426,11 +426,11 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
         tokio::task::spawn_blocking(move || {
             ::tracing::info!("Starting background deep scan for {}", inferred_root_clone);
             
-            let (actual_lsif_path, is_temp) = match lsif_path_opt {
-                Some(path) => (path, false),
+            let actual_lsif_path = match lsif_path_opt {
+                Some(path) => path,
                 None => {
                     match crate::lsif::auto_generate_lsif(&inferred_root_clone) {
-                        Ok(generated) => (generated, true),
+                        Ok(generated) => generated,
                         Err(e) => {
                             ::tracing::error!("Auto-generation of LSIF failed: {}", e);
                             return;
@@ -444,9 +444,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
                 crate::lsif::parse_and_import_lsif(&actual_lsif_path, &db_path_clone, Some(&inferred_root_clone));
             crate::PAUSE_WATCHER.store(false, std::sync::atomic::Ordering::SeqCst);
 
-            if is_temp {
-                let _ = std::fs::remove_file(&actual_lsif_path);
-            }
+            let _ = std::fs::remove_file(&actual_lsif_path);
 
             match import_res {
                 Ok((nodes, edges)) => {
