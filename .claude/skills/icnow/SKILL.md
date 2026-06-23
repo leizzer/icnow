@@ -5,7 +5,7 @@ description: Triggers whenever the agent is working with source code files (e.g.
 
 # `icnow` Semantic Graph Skill: The Masterclass
 
-Welcome to the `icnow` documentation. This tool interfaces with a high-performance **Kuzu Graph Database** (`knowledge.db`) to give you semantic, structurally aware access to the codebase.
+Welcome to the `icnow` documentation. This tool interfaces with a high-performance **Ladybug Database (lbug)** (`knowledge.db`) to give you semantic, structurally aware access to the codebase.
 
 By using `icnow`, you can navigate massive projects with **95% fewer tokens** and **100% higher accuracy** than recursive grepping. You are no longer flying blind—you have a map.
 
@@ -118,7 +118,7 @@ RETURN f.id
 6.  **`parse_project_file(file_path: String)`**  
     Parses a file and adds it to the graph. Only call if `coverage_check` shows it is missing or out-of-date.
 7.  **`query_graph_cypher(query: String)`**  
-    Executes a Kuzu Graph query using Cypher syntax (SQLite is NOT supported). Use this for custom aggregations (e.g., `MATCH (m:Symbol {kind: 'Method'}) RETURN count(m)`).
+    Executes a LadybugDB Graph query using Cypher syntax (SQLite is NOT supported). Use this for custom aggregations (e.g., `MATCH (m:Symbol {kind: 'Method'}) RETURN count(m)`).
 8.  **`trace_call_path(start_node_id: String, end_node_id: String)`**  
     Traces multi-hop call paths between a specific start and end node.
 9.  **`generate_interactive_map(output_path: String, filter_path: Option<String>)`**  
