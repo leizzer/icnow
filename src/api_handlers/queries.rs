@@ -22,7 +22,7 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
     
     let query_param = req.query.replace("'", "''");
     
-    let mut q = format!("MATCH (n) WHERE (label(n) = 'Symbol' AND n.kind <> 'unresolved_symbol' AND (n.name CONTAINS '{query_param}' OR n.id CONTAINS '{query_param}')) OR (label(n) = 'File' AND n.id CONTAINS '{query_param}')");
+    let mut q = format!("MATCH (n:Symbol) WHERE n.kind <> 'unresolved_symbol' AND (n.name CONTAINS '{query_param}' OR (n.id CONTAINS '{query_param}' AND ('{query_param}' CONTAINS '/' OR '{query_param}' CONTAINS '::')))");
     
     if let Some(filters) = &req.kind_filter {
         if !filters.is_empty() {
@@ -44,9 +44,19 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
 
 pub fn handle_get_file_structure(db_path: &str, req: GetFileStructureRequest) -> Result<String, String> {
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    let q = format!("MATCH (f:File {{id: '{}'}})-[:REL_CONTAINS]->(s:Symbol) RETURN s.id AS id, s.name AS name, s.kind AS label, s.signature AS signature, s.docstring AS docstring", req.file_path.replace("'", "''"));
+    let q = format!("MATCH (f:File {{id: '{}'}})-[:REL_CONTAINS]->(s:Symbol) RETURN s.id AS id, s.kind AS label, s.signature AS signature", req.file_path.replace("'", "''"));
     let mut res = conn.query(&q).map_err(|e| format!("Failed to query file structure: {e}"))?;
-    crate::tools::format_cypher_result(&mut res)
+    let mut out = String::new();
+    while let Some(row) = res.next() {
+        let id = row[0].to_string();
+        let kind = row[1].to_string();
+        let sig = row[2].to_string();
+        out.push_str(&format!("- [{}] {} `{}`\n", kind, id, sig.replace("\n", " ")));
+    }
+    if out.is_empty() {
+        return Ok("No symbols found in this file.".to_string());
+    }
+    Ok(out)
 }
 
 pub fn handle_list_indexed_files(db_path: &str, _req: ListIndexedFilesRequest) -> Result<String, String> {
