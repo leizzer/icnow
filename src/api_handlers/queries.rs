@@ -123,8 +123,8 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
         }
     }
 
-    // 3. Get outgoing dependencies (CALLS or IMPORTS)
-    let q_out = format!("MATCH (s:Symbol {{id: '{}'}})-[r:CALLS|:IMPORTS]->(dep:Symbol) RETURN type(r) AS rel_type, dep.id AS target_id", node_id);
+    // 3. Get outgoing dependencies (CALLS or IMPORTS or INHERITS)
+    let q_out = format!("MATCH (s:Symbol {{id: '{}'}})-[r:CALLS|:IMPORTS|:INHERITS]->(dep:Symbol) RETURN label(r) AS rel_type, dep.id AS target_id", node_id);
     if let Ok(mut res) = conn.query(&q_out) {
         let mut deps = Vec::new();
         while let Some(row) = res.next() {
@@ -143,10 +143,10 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     let colon_base = format!("::{}", base_name);
 
     let q_in = format!(
-        "MATCH (caller:Symbol)-[r:CALLS|:IMPORTS]->(t:Symbol) 
+        "MATCH (caller:Symbol)-[r:CALLS|:IMPORTS|:INHERITS]->(t:Symbol) 
          WHERE t.id = '{node_id}' 
-         OR (t.kind = 'unresolved_symbol' AND type(r) = 'CALLS' AND (t.name = '{base_name}' OR t.name ENDS WITH '{dot_base}' OR t.name ENDS WITH '{colon_base}')) 
-         RETURN type(r) AS rel_type, caller.id AS caller_id, t.file AS file, t.line AS line LIMIT 100"
+         OR (t.kind = 'unresolved_symbol' AND label(r) = 'CALLS' AND (t.name = '{base_name}' OR t.name ENDS WITH '{dot_base}' OR t.name ENDS WITH '{colon_base}')) 
+         RETURN label(r) AS rel_type, caller.id AS caller_id, t.file AS file, t.line AS line LIMIT 100"
     );
     if let Ok(mut res) = conn.query(&q_in) {
         let mut usages = Vec::new();
@@ -176,7 +176,7 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     }
 
     // 5. Get children (CONTAINS or HAS_METHOD)
-    let q_children = format!("MATCH (s:Symbol {{id: '{}'}})-[r:REL_CONTAINS|:HAS_METHOD]->(child:Symbol) RETURN type(r) AS rel_type, child.id AS child_id, child.kind AS child_kind", node_id);
+    let q_children = format!("MATCH (s:Symbol {{id: '{}'}})-[r:REL_CONTAINS|:HAS_METHOD]->(child:Symbol) RETURN label(r) AS rel_type, child.id AS child_id, child.kind AS child_kind", node_id);
     if let Ok(mut res) = conn.query(&q_children) {
         let mut children = Vec::new();
         while let Some(row) = res.next() {

@@ -79,7 +79,7 @@ impl GraphService {
         let svc = self.clone();
         blocking(move || {
             let db_path =
-                svc.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.node.id), None);
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), Some(&req.node.id), None);
             let graph =
                 crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
 
@@ -96,7 +96,7 @@ impl GraphService {
         let svc = self.clone();
         blocking(move || {
             let db_path = svc.resolve_db_path_and_watch(
-                req.project_root.as_deref(),
+                Some(req.project_root.as_str()),
                 Some(&req.edge.source),
                 None,
             );
@@ -119,7 +119,7 @@ impl GraphService {
         let svc = self.clone();
         blocking(move || {
             let db_path =
-                svc.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.file_path), None);
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), Some(&req.file_path), None);
             let graph =
                 crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
             let _ = graph.query("BEGIN TRANSACTION");
@@ -192,7 +192,7 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             queries::handle_query_graph(&db_path, req)
         }).await
     }
@@ -207,7 +207,7 @@ impl GraphService {
         let svc = self.clone();
         blocking(move || {
             let db_path =
-                svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, Some(&req.node_id));
             tracing::handle_traverse_graph(&db_path, req)
         }).await
     }
@@ -221,7 +221,7 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             queries::handle_query_graph_cypher(&db_path, req)
         }).await
     }
@@ -235,7 +235,7 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             queries::handle_search_symbols(&db_path, req)
         }).await
     }
@@ -250,7 +250,7 @@ impl GraphService {
         let svc = self.clone();
         blocking(move || {
             let db_path =
-                svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, Some(&req.node_id));
             tracing::handle_get_dependencies(&db_path, req)
         }).await
     }
@@ -265,7 +265,7 @@ impl GraphService {
         let svc = self.clone();
         blocking(move || {
             let db_path =
-                svc.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.file_path), None);
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), Some(&req.file_path), None);
             queries::handle_get_file_structure(&db_path, req)
         }).await
     }
@@ -279,7 +279,7 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             queries::handle_list_indexed_files(&db_path, req)
         }).await
     }
@@ -293,7 +293,7 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.directory_path), None);
+            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), Some(&req.directory_path), None);
             queries::handle_coverage_check(&db_path, req)
         }).await
     }
@@ -307,7 +307,7 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             let filter = req.filter_path.unwrap_or_default();
 
             crate::exporter::generate_html(&db_path, &req.output_path, &filter)
@@ -330,7 +330,7 @@ impl GraphService {
         let svc = self.clone();
         blocking(move || {
             let db_path =
-                svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, Some(&req.node_id));
             queries::handle_get_symbol_implementation(&db_path, req)
         }).await
     }
@@ -345,7 +345,7 @@ impl GraphService {
         let svc = self.clone();
         blocking(move || {
             let db_path =
-                svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, Some(&req.node_id));
             queries::handle_get_symbol_info(&db_path, req)
         }).await
     }
@@ -360,7 +360,7 @@ impl GraphService {
         let svc = self.clone();
         blocking(move || {
             let db_path = svc.resolve_db_path_and_watch(
-                req.project_root.as_deref(),
+                Some(req.project_root.as_str()),
                 None,
                 Some(&req.start_node_id),
             );
@@ -409,9 +409,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
         description = "Parses an LSIF (Language Server Index Format) dump file to extract precise definition and reference relationships across the codebase and imports them into the graph database. If no lsif_path is provided, it automatically detects the project type (Rust, Ruby, TypeScript/React) and generates the dump on the fly using standard CLI compilers."
     )]
     async fn deep_scan(&self, Parameters(req): Parameters<DeepScanRequest>) -> Result<String, String> {
-        let inferred_root = req
-            .project_root
-            .clone()
+        let inferred_root = Some(req.project_root.clone())
             .or_else(|| {
                 std::env::current_dir()
                     .ok()
@@ -475,7 +473,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             memory::handle_save_memory(&db_path, req)
         }).await
     }
@@ -493,7 +491,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     async fn get_memory(&self, Parameters(req): Parameters<GetMemoryRequest>) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             memory::handle_get_memory(&db_path, req)
         }).await
     }
@@ -507,7 +505,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             memory::handle_search_memories(&db_path, req)
         }).await
     }
@@ -521,7 +519,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             memory::handle_list_memories(&db_path, req)
         }).await
     }
@@ -565,7 +563,7 @@ pub struct SaveNodeRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -574,7 +572,7 @@ pub struct SaveEdgeRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -586,7 +584,7 @@ pub struct ParseFileRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -598,7 +596,7 @@ pub struct QueryGraphRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -612,7 +610,7 @@ pub struct TraverseGraphRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -624,7 +622,7 @@ pub struct QueryGraphCypherRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -638,7 +636,7 @@ pub struct SearchSymbolsRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
     #[schemars(
         description = "Optional list of node labels to filter the results (e.g., ['Class', 'Method'])."
     )]
@@ -658,7 +656,7 @@ pub struct GetDependenciesRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -670,7 +668,7 @@ pub struct GetSymbolInfoRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -678,7 +676,7 @@ pub struct ListIndexedFilesRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -690,7 +688,7 @@ pub struct CoverageCheckRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -702,7 +700,7 @@ pub struct GetFileStructureRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -718,7 +716,7 @@ pub struct GenerateInteractiveMapRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -730,7 +728,7 @@ pub struct GetSymbolImplementationRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -746,7 +744,7 @@ pub struct TraceCallPathRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -754,7 +752,7 @@ pub struct GetGraphSchemaRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -766,7 +764,7 @@ pub struct DeepScanRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -798,7 +796,7 @@ pub struct SaveMemoryRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -810,7 +808,7 @@ pub struct GetMemoryRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -822,7 +820,7 @@ pub struct SearchMemoriesRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -830,7 +828,7 @@ pub struct ListMemoriesRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]
-    pub project_root: Option<String>,
+    pub project_root: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

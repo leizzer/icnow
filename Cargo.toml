@@ -1,6 +1,6 @@
 [package]
 name = "icnow"
-version = "0.1.35"
+version = "0.1.36"
 edition = "2024"
 
 [lib]
@@ -25,4 +25,5 @@ libc = "0.2"
 rusqlite = "0.39.0"
 lbug = "0.17.1"
 fastembed = "5.17.2"
+walkdir = "2.5.0"
 
