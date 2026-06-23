@@ -59,263 +59,319 @@ impl GraphService {
     }
 }
 
+/// Helper to run a blocking closure on the spawn_blocking pool and flatten the JoinError.
+async fn blocking<F, T>(f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("Task join error: {e}"))?
+}
+
 #[tool_router(server_handler)]
 impl GraphService {
     #[tool(
         description = "Saves a new node (file, function, class, module, etc.) into the graph. Use this tool manually only if the static parser missed a specific node or when explicitly registering domain-level concepts like Rails Controllers/Models and their fields."
     )]
-    fn save_node(&self, Parameters(req): Parameters<SaveNodeRequest>) -> Result<String, String> {
-        let db_path =
-            self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.node.id), None);
-        let graph =
-            crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    async fn save_node(&self, Parameters(req): Parameters<SaveNodeRequest>) -> Result<String, String> {
+        let svc = self.clone();
+        blocking(move || {
+            let db_path =
+                svc.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.node.id), None);
+            let graph =
+                crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
 
-        req.node.save(&graph).map_err(|e| e.to_string())?;
+            req.node.save(&graph).map_err(|e| e.to_string())?;
 
-        Ok(format!("Node {} saved successfully.", req.node.id))
+            Ok(format!("Node {} saved successfully.", req.node.id))
+        }).await
     }
 
     #[tool(
         description = "Creates or updates a directed edge between two existing nodes (e.g. connecting a caller function to a callee method, or mapping database entity relationships). Use this tool to explicitly link imports to their physical file targets, functions to their internal calls, or class inheritance/mixins."
     )]
-    fn save_edge(&self, Parameters(req): Parameters<SaveEdgeRequest>) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(
-            req.project_root.as_deref(),
-            Some(&req.edge.source),
-            None,
-        );
-        let graph =
-            crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    async fn save_edge(&self, Parameters(req): Parameters<SaveEdgeRequest>) -> Result<String, String> {
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(
+                req.project_root.as_deref(),
+                Some(&req.edge.source),
+                None,
+            );
+            let graph =
+                crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
 
-        req.edge.save(&graph).map_err(|e| e.to_string())?;
+            req.edge.save(&graph).map_err(|e| e.to_string())?;
 
-        Ok(format!("Edge {} saved successfully.", req.edge.id))
+            Ok(format!("Edge {} saved successfully.", req.edge.id))
+        }).await
     }
 
     #[tool(
         description = "Parses a source file (Rust, Ruby, TypeScript, TSX) using Tree-sitter, extracts all structural nodes (Functions, Methods, Classes, Interfaces, Imports), and automatically adds them and their container relationships to the graph database. Call this tool first to map out the architecture of a new or modified file."
     )]
-    fn parse_project_file(
+    async fn parse_project_file(
         &self,
         Parameters(req): Parameters<ParseFileRequest>,
     ) -> Result<String, String> {
-        let db_path =
-            self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.file_path), None);
-        let graph =
-            crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-        let _ = graph.query("BEGIN TRANSACTION");
-        let summary = crate::parser::parse_file(&req.file_path, &graph)
-            .map_err(|e| {
-                let _ = graph.query("ROLLBACK");
-                format!("Parse error: {e}")
-            })?;
-        let _ = graph.query("COMMIT");
+        let svc = self.clone();
+        blocking(move || {
+            let db_path =
+                svc.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.file_path), None);
+            let graph =
+                crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+            let _ = graph.query("BEGIN TRANSACTION");
+            let summary = crate::parser::parse_file(&req.file_path, &graph)
+                .map_err(|e| {
+                    let _ = graph.query("ROLLBACK");
+                    format!("Parse error: {e}")
+                })?;
+            let _ = graph.query("COMMIT");
 
-        let mut out = format!(
-            "Successfully parsed `{}` and added nodes to graph.\n\n",
-            req.file_path
-        );
-        out.push_str("**File Architecture Summary:**\n");
+            let mut out = format!(
+                "Successfully parsed `{}` and added nodes to graph.\n\n",
+                req.file_path
+            );
+            out.push_str("**File Architecture Summary:**\n");
 
-        if !summary.imports.is_empty() {
-            out.push_str(&format!(
-                "- **Imports**: `{}`\n",
-                summary.imports.join("`, `")
-            ));
-        }
+            if !summary.imports.is_empty() {
+                out.push_str(&format!(
+                    "- **Imports**: `{}`\n",
+                    summary.imports.join("`, `")
+                ));
+            }
 
-        if !summary.structures.is_empty() {
-            for (label, names) in &summary.structures {
-                let plural_label = if label == "Class" {
-                    "Classes".to_string()
-                } else {
-                    format!("{label}s")
-                };
-                out.push_str(&format!("- **{plural_label}**:\n"));
-                for name in names {
-                    out.push_str(&format!("  - `{name}`\n"));
-                    if let Some(methods) = summary.methods.get(name) {
-                        let mut grouped_methods: HashMap<String, Vec<String>> = HashMap::new();
-                        for (m_label, m_name) in methods {
-                            grouped_methods
-                                .entry(m_label.clone())
-                                .or_default()
-                                .push(m_name.clone());
-                        }
-                        for (m_label, m_names) in grouped_methods {
-                            out.push_str(&format!(
-                                "    - {}s: `{}`\n",
-                                m_label,
-                                m_names.join("`, `")
-                            ));
+            if !summary.structures.is_empty() {
+                for (label, names) in &summary.structures {
+                    let plural_label = if label == "Class" {
+                        "Classes".to_string()
+                    } else {
+                        format!("{label}s")
+                    };
+                    out.push_str(&format!("- **{plural_label}**:\n"));
+                    for name in names {
+                        out.push_str(&format!("  - `{name}`\n"));
+                        if let Some(methods) = summary.methods.get(name) {
+                            let mut grouped_methods: HashMap<String, Vec<String>> = HashMap::new();
+                            for (m_label, m_name) in methods {
+                                grouped_methods
+                                    .entry(m_label.clone())
+                                    .or_default()
+                                    .push(m_name.clone());
+                            }
+                            for (m_label, m_names) in grouped_methods {
+                                out.push_str(&format!(
+                                    "    - {}s: `{}`\n",
+                                    m_label,
+                                    m_names.join("`, `")
+                                ));
+                            }
                         }
                     }
                 }
             }
-        }
 
-        if !summary.standalone_functions.is_empty() {
-            for (label, names) in &summary.standalone_functions {
-                out.push_str(&format!("- **{}s**: `{}`\n", label, names.join("`, `")));
+            if !summary.standalone_functions.is_empty() {
+                for (label, names) in &summary.standalone_functions {
+                    out.push_str(&format!("- **{}s**: `{}`\n", label, names.join("`, `")));
+                }
             }
-        }
 
-        Ok(out)
+            Ok(out)
+        }).await
     }
 
     #[tool(
         description = "Executes a raw SQL SELECT query against the underlying SQLite database tables (nodes, edges, node_props_text) to retrieve metadata, properties, counts, or precise source code fragments. **CRITICAL:** NEVER use PRAGMA queries to discover tables! ALWAYS call `get_graph_schema` FIRST to get the schema. This is the PREFERRED tool for lookups and filtering over Cypher due to 12,000x index speedups."
     )]
-    fn query_graph(
+    async fn query_graph(
         &self,
         Parameters(req): Parameters<QueryGraphRequest>,
     ) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
-        queries::handle_query_graph(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            queries::handle_query_graph(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "Recursively walks the graph bidirectionally from a starting node up to a specified depth (max_depth) and returns an indented relationship list. Use this tool when you want to discover the neighborhood of dependencies, callers, or subclasses of a particular node in a single call."
     )]
-    fn traverse_graph(
+    async fn traverse_graph(
         &self,
         Parameters(req): Parameters<TraverseGraphRequest>,
     ) -> Result<String, String> {
-        let db_path =
-            self.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
-        tracing::handle_traverse_graph(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path =
+                svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
+            tracing::handle_traverse_graph(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "Executes a graph query using Cypher syntax (e.g., MATCH (source)-[rel]->(target) WHERE ...) to discover patterns, links, or cross-file dependencies. **CRITICAL:** DO NOT use this for property lookups, text filtering, or counts (use `query_graph` SQL instead). ONLY use Cypher for multi-hop structural/relationship traversals."
     )]
-    fn query_graph_cypher(
+    async fn query_graph_cypher(
         &self,
         Parameters(req): Parameters<QueryGraphCypherRequest>,
     ) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
-        queries::handle_query_graph_cypher(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            queries::handle_query_graph_cypher(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "Searches the graph for nodes matching a symbol name or pattern (e.g., a class, function, or file name). Use this tool to instantly find where a symbol is defined across the entire workspace without knowing its file path."
     )]
-    fn search_symbols(
+    async fn search_symbols(
         &self,
         Parameters(req): Parameters<SearchSymbolsRequest>,
     ) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
-        queries::handle_search_symbols(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            queries::handle_search_symbols(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "Traces incoming or outgoing references for a specific node ID (e.g. finding callers or callees of a function). Provide the node_id and the direction ('incoming' for callers, 'outgoing' for callees)."
     )]
-    fn get_dependencies(
+    async fn get_dependencies(
         &self,
         Parameters(req): Parameters<GetDependenciesRequest>,
     ) -> Result<String, String> {
-        let db_path =
-            self.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
-        tracing::handle_get_dependencies(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path =
+                svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
+            tracing::handle_get_dependencies(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "Returns the structural outline of a source file (including its Classes, Methods, and Singleton Methods) by directly querying the pre-indexed graph database. Use this tool instead of `parse_project_file` when you only need to see what symbols are defined inside a file without incurring the heavy cost of disk reads or re-parsing. It efficiently lists the NodeIDs which you can then pass to `traverse_graph` or `get_dependencies` to explore their call relationships."
     )]
-    fn get_file_structure(
+    async fn get_file_structure(
         &self,
         Parameters(req): Parameters<GetFileStructureRequest>,
     ) -> Result<String, String> {
-        let db_path =
-            self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.file_path), None);
-        queries::handle_get_file_structure(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path =
+                svc.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.file_path), None);
+            queries::handle_get_file_structure(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "Retrieves a comprehensive list of all file paths currently tracked and indexed in the knowledge graph. Agents should use this tool to discover available source code files in the workspace (such as controllers, models, or specific modules) that are ready for immediate semantic querying via `get_file_structure` or `query_graph_cypher` without needing to rely on standard terminal commands like `ls` or `find`."
     )]
-    fn list_indexed_files(
+    async fn list_indexed_files(
         &self,
         Parameters(req): Parameters<ListIndexedFilesRequest>,
     ) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
-        queries::handle_list_indexed_files(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            queries::handle_list_indexed_files(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "Analyzes a directory to report index staleness and coverage. Given a directory path, it recursively scans for source files (.rb, .rs, .ts) and cross-references them against the graph database. Returns a detailed report of how many files are indexed, missing, or stale (modified on disk since indexing), along with a sample list of missing/stale files. Use this BEFORE searching when you suspect files might be missing from the graph."
     )]
-    fn coverage_check(
+    async fn coverage_check(
         &self,
         Parameters(req): Parameters<CoverageCheckRequest>,
     ) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.directory_path), None);
-        queries::handle_coverage_check(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), Some(&req.directory_path), None);
+            queries::handle_coverage_check(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "Generates a standalone, interactive HTML map of the knowledge graph and saves it to a specified file. The HTML file uses Cytoscape.js to visually render all files, functions, classes, and their relationships (IMPORTS, CALLS, CONTAINS). Agents should use this tool when the user asks for a visual representation of the architecture or a specific folder/file."
     )]
-    fn generate_interactive_map(
+    async fn generate_interactive_map(
         &self,
         Parameters(req): Parameters<GenerateInteractiveMapRequest>,
     ) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
-        let filter = req.filter_path.unwrap_or_default();
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            let filter = req.filter_path.unwrap_or_default();
 
-        crate::exporter::generate_html(&db_path, &req.output_path, &filter)
-            .map_err(|e| format!("Failed to generate interactive map: {e}"))?;
+            crate::exporter::generate_html(&db_path, &req.output_path, &filter)
+                .map_err(|e| format!("Failed to generate interactive map: {e}"))?;
 
-        Ok(format!(
-            "Interactive map successfully generated and saved to: {}",
-            req.output_path
-        ))
+            Ok(format!(
+                "Interactive map successfully generated and saved to: {}",
+                req.output_path
+            ))
+        }).await
     }
 
     #[tool(
         description = "Retrieves the raw source code block (implementation body) of a specific symbol (e.g. class, method, or standalone function) without reading the entire file. Use this tool when you need to inspect the actual code logic of a node found via search_symbols or get_file_structure."
     )]
-    fn get_symbol_implementation(
+    async fn get_symbol_implementation(
         &self,
         Parameters(req): Parameters<GetSymbolImplementationRequest>,
     ) -> Result<String, String> {
-        let db_path =
-            self.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
-        queries::handle_get_symbol_implementation(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path =
+                svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
+            queries::handle_get_symbol_implementation(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "Returns complete 360-degree context for a single node ID. Includes its basic properties (signature, docstring), the parent container it belongs to, its outgoing dependencies (what it calls/imports), and its incoming usages (what calls it). Use this tool instead of writing complex Cypher queries to instantly understand how a symbol fits into the codebase."
     )]
-    fn get_symbol_info(
+    async fn get_symbol_info(
         &self,
         Parameters(req): Parameters<GetSymbolInfoRequest>,
     ) -> Result<String, String> {
-        let db_path =
-            self.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
-        queries::handle_get_symbol_info(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path =
+                svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, Some(&req.node_id));
+            queries::handle_get_symbol_info(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "Traces multi-hop call paths between a specific start_node_id and end_node_id up to a max_depth. Useful for finding how a controller reaches a specific database model or service without having to call get_dependencies repeatedly."
     )]
-    fn trace_call_path(
+    async fn trace_call_path(
         &self,
         Parameters(req): Parameters<TraceCallPathRequest>,
     ) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(
-            req.project_root.as_deref(),
-            None,
-            Some(&req.start_node_id),
-        );
-        tracing::handle_trace_call_path(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(
+                req.project_root.as_deref(),
+                None,
+                Some(&req.start_node_id),
+            );
+            tracing::handle_trace_call_path(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "Returns documentation about the graph schema (available node labels, relationship types, and property keys). **CRITICAL:** ALWAYS call this tool FIRST to understand the SQLite tables (`nodes`, `edges`, etc.) before writing ANY SQL queries. NEVER use `PRAGMA table_info`."
     )]
-    fn get_graph_schema(
+    async fn get_graph_schema(
         &self,
         Parameters(_req): Parameters<GetGraphSchemaRequest>,
     ) -> Result<String, String> {
@@ -352,7 +408,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     #[tool(
         description = "Parses an LSIF (Language Server Index Format) dump file to extract precise definition and reference relationships across the codebase and imports them into the graph database. If no lsif_path is provided, it automatically detects the project type (Rust, Ruby, TypeScript/React) and generates the dump on the fly using standard CLI compilers."
     )]
-    fn deep_scan(&self, Parameters(req): Parameters<DeepScanRequest>) -> Result<String, String> {
+    async fn deep_scan(&self, Parameters(req): Parameters<DeepScanRequest>) -> Result<String, String> {
         let inferred_root = req
             .project_root
             .clone()
@@ -413,12 +469,15 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     #[tool(
         description = "[EXPERIMENTAL] Creates or updates a memory node representing a high-level concept or business logic flow, linking it to code nodes or other memory nodes. Enforces prefix 'memory::'. For the `links` array, you DO NOT need exact node IDs! You can simply pass the exact class name (e.g. 'ApplicationController') or file name, and the server will automatically resolve it to the correct Node ID."
     )]
-    fn save_memory(
+    async fn save_memory(
         &self,
         Parameters(req): Parameters<SaveMemoryRequest>,
     ) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
-        memory::handle_save_memory(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            memory::handle_save_memory(&db_path, req)
+        }).await
     }
 
     #[tool(
@@ -431,31 +490,40 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     #[tool(
         description = "[EXPERIMENTAL] Retrieves a detailed memory node, its description, associated keywords, and its connections to code files/methods and sub-concepts."
     )]
-    fn get_memory(&self, Parameters(req): Parameters<GetMemoryRequest>) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
-        memory::handle_get_memory(&db_path, req)
+    async fn get_memory(&self, Parameters(req): Parameters<GetMemoryRequest>) -> Result<String, String> {
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            memory::handle_get_memory(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "[EXPERIMENTAL] Searches for concepts and business logic flows using SQLite FTS5 relevance ranking. Returns matching memory nodes and their descriptions."
     )]
-    fn search_memories(
+    async fn search_memories(
         &self,
         Parameters(req): Parameters<SearchMemoriesRequest>,
     ) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
-        memory::handle_search_memories(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            memory::handle_search_memories(&db_path, req)
+        }).await
     }
 
     #[tool(
         description = "[EXPERIMENTAL] Lists all high-level concept memory nodes stored in the project's knowledge base."
     )]
-    fn list_memories(
+    async fn list_memories(
         &self,
         Parameters(req): Parameters<ListMemoriesRequest>,
     ) -> Result<String, String> {
-        let db_path = self.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
-        memory::handle_list_memories(&db_path, req)
+        let svc = self.clone();
+        blocking(move || {
+            let db_path = svc.resolve_db_path_and_watch(req.project_root.as_deref(), None, None);
+            memory::handle_list_memories(&db_path, req)
+        }).await
     }
 }
 
@@ -772,8 +840,8 @@ pub struct GetVersionRequest {}
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_memory_nodes() {
+    #[tokio::test]
+    async fn test_memory_nodes() {
         let db_path = "test_memories.db";
         let _ = std::fs::remove_file(db_path);
 
@@ -818,7 +886,7 @@ mod tests {
             links: vec![],
             link_type: None,
             project_root: None,
-        }));
+        })).await;
         assert!(err_res.is_err());
         assert!(err_res.unwrap_err().contains("prefix"));
 
@@ -831,7 +899,7 @@ mod tests {
             links: vec!["src/non_existent.rs".to_string()],
             link_type: None,
             project_root: None,
-        }));
+        })).await;
         assert!(err_res.is_err());
         assert!(err_res.unwrap_err().contains("Link target not found"));
 
@@ -846,7 +914,7 @@ mod tests {
                 links: vec!["src/main.rs".to_string()],
                 link_type: None,
                 project_root: None,
-            }))
+            })).await
             .unwrap();
         assert!(ok_res.contains("saved successfully"));
 
@@ -860,7 +928,7 @@ mod tests {
                 links: vec!["src/lib.rs".to_string()],
                 link_type: None,
                 project_root: None,
-            }))
+            })).await
             .unwrap();
         assert!(ok_res2.contains("saved successfully"));
 
@@ -869,7 +937,7 @@ mod tests {
             .get_memory(Parameters(GetMemoryRequest {
                 id: "memory::relative_test".to_string(),
                 project_root: None,
-            }))
+            })).await
             .unwrap();
         assert!(get_res2.contains("Relative Path Test"));
         assert!(get_res2.contains(&abs_file_path));
@@ -879,7 +947,7 @@ mod tests {
             .get_memory(Parameters(GetMemoryRequest {
                 id: "memory::auth".to_string(),
                 project_root: None,
-            }))
+            })).await
             .unwrap();
         assert!(get_res.contains("Auth Flow"));
         assert!(get_res.contains("JWT token validation"));
@@ -888,7 +956,7 @@ mod tests {
 
         // 6. Test list_memories
         let list_res = service
-            .list_memories(Parameters(ListMemoriesRequest { project_root: None }))
+            .list_memories(Parameters(ListMemoriesRequest { project_root: None })).await
             .unwrap();
         assert!(list_res.contains("Auth Flow"));
         assert!(list_res.contains("memory::auth"));
@@ -898,7 +966,7 @@ mod tests {
             .search_memories(Parameters(SearchMemoriesRequest {
                 query: "jwt token".to_string(),
                 project_root: None,
-            }))
+            })).await
             .unwrap();
         assert!(search_res.contains("Auth Flow"));
         assert!(search_res.contains("memory::auth"));
@@ -908,7 +976,7 @@ mod tests {
             .search_memories(Parameters(SearchMemoriesRequest {
                 query: "oauth".to_string(),
                 project_root: None,
-            }))
+            })).await
             .unwrap();
         assert!(search_res2.contains("Auth Flow"));
 

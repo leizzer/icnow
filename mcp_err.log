@@ -1,0 +1,64 @@
+2026-06-23T02:38:31.929502Z  INFO icnow: Starting icnow Graph MCP server...
+2026-06-23T02:38:31.930737Z  INFO serve_inner: rmcp::service: Service initialized as server peer_info=Some(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion("2024-11-05"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: None, sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: "test", title: None, version: "1.0", description: None, icons: None, website_url: None } })
+2026-06-23T02:38:31.931016Z  INFO icnow::watcher: Registering new workspace to watch: "/Users/cristian/Projects/blackhole/icnow"
+2026-06-23T02:38:31.931020Z  WARN serve_inner: rmcp::service: response error id=2 error=ErrorData { code: ErrorCode(-32601), message: "notifications/initialized", data: None }
+2026-06-23T02:38:31.931079Z  INFO serve_inner: rmcp::service: input stream terminated
+2026-06-23T02:38:31.931118Z  INFO icnow: get_or_init_db called with path: /Users/cristian/Projects/blackhole/icnow/knowledge.db
+2026-06-23T02:38:31.931179Z  INFO icnow: Initializing new DB for path: /Users/cristian/Projects/blackhole/icnow/knowledge.db
+2026-06-23T02:38:31.931998Z  INFO serve_inner: icnow::watcher: Registering new workspace to watch: "/Users/cristian/Projects/dgapp_bkp"
+2026-06-23T02:38:31.932020Z  INFO serve_inner: icnow: get_or_init_db called with path: /Users/cristian/Projects/dgapp_bkp/knowledge.db
+2026-06-23T02:38:31.932033Z  INFO icnow: get_or_init_db called with path: /Users/cristian/Projects/dgapp_bkp/knowledge.db
+2026-06-23T02:38:31.980557Z  WARN icnow: Corrupted WAL file detected at /Users/cristian/Projects/blackhole/icnow/knowledge.db. Wiping and reinitializing...
+2026-06-23T02:38:31.997348Z  INFO icnow: Calling init_schema
+2026-06-23T02:38:32.039335Z  INFO icnow: Inserting DB into map
+2026-06-23T02:38:32.039360Z  INFO icnow: Returning DB
+2026-06-23T02:38:32.039380Z  INFO serve_inner: icnow: Initializing new DB for path: /Users/cristian/Projects/dgapp_bkp/knowledge.db
+2026-06-23T02:38:32.068339Z  INFO icnow::watcher: Acquired watcher lock for PID 60927. Activating file watcher.
+2026-06-23T02:38:32.068359Z  INFO icnow::watcher: Reconciling workspace: "/Users/cristian/Projects/blackhole/icnow"
+2026-06-23T02:38:32.068391Z  INFO icnow: get_or_init_db called with path: /Users/cristian/Projects/blackhole/icnow/knowledge.db
+2026-06-23T02:38:32.086353Z  WARN serve_inner: icnow: Corrupted WAL file detected at /Users/cristian/Projects/dgapp_bkp/knowledge.db. Wiping and reinitializing...
+2026-06-23T02:38:32.102310Z  INFO serve_inner: icnow: Calling init_schema
+2026-06-23T02:38:32.136314Z  INFO serve_inner: icnow: Inserting DB into map
+2026-06-23T02:38:32.136347Z  INFO serve_inner: icnow: Returning DB
+2026-06-23T02:38:32.136393Z  INFO icnow: Found existing DB for path: /Users/cristian/Projects/dgapp_bkp/knowledge.db
+2026-06-23T02:38:32.136461Z  INFO icnow: Found existing DB for path: /Users/cristian/Projects/blackhole/icnow/knowledge.db
+2026-06-23T02:38:32.143365Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/test_schema.rs
+2026-06-23T02:38:32.145297Z  INFO icnow::watcher: Acquired watcher lock for PID 60927. Activating file watcher.
+2026-06-23T02:38:32.145310Z  INFO icnow::watcher: Reconciling workspace: "/Users/cristian/Projects/dgapp_bkp"
+2026-06-23T02:38:32.145316Z  INFO icnow: get_or_init_db called with path: /Users/cristian/Projects/dgapp_bkp/knowledge.db
+2026-06-23T02:38:32.145321Z  INFO icnow: Found existing DB for path: /Users/cristian/Projects/dgapp_bkp/knowledge.db
+2026-06-23T02:38:32.145366Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/scratch.rs
+2026-06-23T02:38:32.145422Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/test_parse_project_file.rs
+2026-06-23T02:38:32.145505Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/test_deep_scan_direct_bkp.rs
+2026-06-23T02:38:32.145572Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/tests/mcp_test.rs
+2026-06-23T02:38:32.145611Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/tests/race_test.rs
+2026-06-23T02:38:32.145642Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/tests/race_test2.rs
+2026-06-23T02:38:32.145663Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/tests/crash_test.rs
+2026-06-23T02:38:32.145683Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/query_db.rs
+2026-06-23T02:38:32.145726Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/test_deep_scan_direct.rs
+2026-06-23T02:38:32.145745Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/query_db2.rs
+2026-06-23T02:38:32.145773Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/test_kuzu_tx.rs
+2026-06-23T02:38:32.145799Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/test_deep_scan.rs
+2026-06-23T02:38:32.145817Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/test_gl.rs
+2026-06-23T02:38:32.145846Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/lsif.rs
+2026-06-23T02:38:32.145890Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/bin/test_concurrent_read.rs
+2026-06-23T02:38:32.145914Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/bin/test_schema.rs
+2026-06-23T02:38:32.145948Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/bin/test_concurrent_tx.rs
+2026-06-23T02:38:32.145967Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/bin/test_parser.rs
+2026-06-23T02:38:32.145991Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/bin/wrapper.rs
+2026-06-23T02:38:32.146022Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/bin/test_tx.rs
+2026-06-23T02:38:32.146055Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/bin/test_syntax_error.rs
+2026-06-23T02:38:32.146078Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/bin/test_loop_tx.rs
+2026-06-23T02:38:32.146096Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/bin/export_html.rs
+2026-06-23T02:38:32.146123Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/tools.rs
+2026-06-23T02:38:32.146151Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/exporter.rs
+2026-06-23T02:38:32.146175Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/reconciler.rs
+2026-06-23T02:38:32.146193Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/lib.rs
+2026-06-23T02:38:32.146221Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/models.rs
+2026-06-23T02:38:32.146253Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/api_handlers/memory.rs
+2026-06-23T02:38:32.146281Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/api_handlers/tracing.rs
+2026-06-23T02:38:32.146313Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/api_handlers/mod.rs
+2026-06-23T02:38:32.146340Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/api_handlers/queries.rs
+2026-06-23T02:38:32.146356Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/watcher.rs
+2026-06-23T02:38:32.146394Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/main.rs
+2026-06-23T02:38:32.146423Z  INFO icnow::watcher: New file found offline: /Users/cristian/Projects/blackhole/icnow/src/parser.rs

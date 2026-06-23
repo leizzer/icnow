@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"rmcp","version":"1.7.0"}}}
+{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"notifications/initialized"}}
