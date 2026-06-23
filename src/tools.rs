@@ -320,70 +320,33 @@ impl GraphService {
         Parameters(_req): Parameters<GetGraphSchemaRequest>,
     ) -> Result<String, String> {
         let schema = r#"
-# `icnow` Knowledge Graph (SQLite Schema)
+# `icnow` Knowledge Graph (KùzuDB Schema)
 
-**CRITICAL PERFORMANCE RULE:** To maximize performance and avoid slow Cypher translations, prioritize writing **raw SQL queries** using the `query_graph` tool when answering complex questions. **DO NOT** use PRAGMA queries to discover the schema—it is provided below.
+This graph uses **KùzuDB** and is queried via **Cypher** using the `query_graph_cypher` tool. **DO NOT** use SQLite or SQL queries.
 
-## Database Schema
+## Nodes
+- **`File`**: Represents a source file.
+  - Properties: `id` (STRING: absolute path)
+- **`Symbol`**: Represents a code symbol (class, method, function, macro, struct, etc).
+  - Properties: `id` (STRING: globally unique identifier, e.g., '/path/file.rb::ClassName::method_name'), `name` (STRING: short name), `kind` (STRING: e.g., 'Class', 'Method', 'Function', 'Variable'), `signature` (STRING), `docstring` (STRING), `source_code` (STRING).
+- **`Memory`**: Represents an architectural concept.
+  - Properties: `id` (STRING), `name` (STRING), `description` (STRING).
 
-### `nodes`
-- `id`: INTEGER PRIMARY KEY
+## Edges
+- `(f:File)-[:REL_CONTAINS]->(s:Symbol)`: A file defines a symbol.
+- `(s1:Symbol)-[:HAS_METHOD]->(s2:Symbol)`: A class/module contains a method.
+- `(s1:Symbol)-[:CALLS]->(s2:Symbol)`: A symbol calls another symbol (or inherits from).
+- `(f:File)-[:IMPORTS]->(s:Symbol)`: A file imports a module/symbol.
+- `(m:Memory)-[:LINKS_TO]->(s:Symbol)`: A memory refers to a code symbol.
+- `(m:Memory)-[:LINKS_TO_FILE]->(f:File)`: A memory refers to a file.
 
-### `edges`
-- `source_id`: INTEGER (Foreign key to `nodes.id`)
-- `target_id`: INTEGER (Foreign key to `nodes.id`)
-- `type`: TEXT (Relationship type: e.g., 'HAS_METHOD', 'REL_CONTAINS', 'CALLS', 'IMPORTS')
-
-### `node_labels`
-- `node_id`: INTEGER (Foreign key to `nodes.id`)
-- `label`: TEXT (Node type: e.g., 'Class', 'Module', 'File', 'Method', 'Function', 'Struct')
-
-### `property_keys`
-- `id`: INTEGER PRIMARY KEY
-- `key`: TEXT (Property name: e.g., 'id' (absolute path/identifier), 'name', 'source_code')
-
-### `node_props_text`
-- `node_id`: INTEGER (Foreign key to `nodes.id`)
-- `key_id`: INTEGER (Foreign key to `property_keys.id`)
-- `value`: TEXT (The actual property value)
-
-## Query Patterns and Best Practices
-
-To fetch properties efficiently, join `node_props_text` and `property_keys`. 
-**DO NOT** use string manipulation functions (`toLower`, `replace`) on indexed columns (`value`, `label`, `type`), as this forces full table scans. Use standard `LIKE` or `=` operations.
-
-### Example: Finding properties of a Node (e.g. Class 'User')
-```sql
-SELECT p_id.value AS node_identifier, p_name.value AS name, l.label
-FROM nodes n
-JOIN node_labels l ON n.id = l.node_id
-JOIN node_props_text p_id ON n.id = p_id.node_id 
-  AND p_id.key_id = (SELECT id FROM property_keys WHERE key = 'id')
-LEFT JOIN node_props_text p_name ON n.id = p_name.node_id 
-  AND p_name.key_id = (SELECT id FROM property_keys WHERE key = 'name')
-WHERE p_name.value = 'User' AND l.label = 'Class';
-```
-
-### Example: Counting Methods of a Specific Class ('User')
-```sql
-SELECT COUNT(e.target_id)
-FROM edges e
-JOIN node_props_text p_source ON e.source_id = p_source.node_id 
-  AND p_source.key_id = (SELECT id FROM property_keys WHERE key = 'id')
-WHERE e.type = 'HAS_METHOD' 
-  AND p_source.value LIKE '%::User';
-```
-
-### Example: Finding all Files
-```sql
-SELECT p.value AS FilePath 
-FROM node_labels l
-JOIN node_props_text p ON l.node_id = p.node_id 
-  AND p.key_id = (SELECT id FROM property_keys WHERE key = 'id')
-WHERE l.label = 'File';
-```
-        "#;
-        Ok(schema.trim().to_string())
+## Cypher Examples
+- **Count all methods inside a file**: 
+  `MATCH (f:File {id: '/path/file.rb'})-[:REL_CONTAINS]->(m:Symbol {kind: 'Method'}) RETURN count(m)`
+- **Find all subclasses of ApplicationRecord**: 
+  `MATCH (c:Symbol {kind: 'Class'})-[:CALLS]->(p:Symbol {name: 'ApplicationRecord'}) RETURN c.id`
+"#;
+        Ok(schema.to_string())
     }
 
     #[tool(
