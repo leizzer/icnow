@@ -320,9 +320,9 @@ impl GraphService {
         Parameters(_req): Parameters<GetGraphSchemaRequest>,
     ) -> Result<String, String> {
         let schema = r#"
-# `icnow` Knowledge Graph (KùzuDB Schema)
+# `icnow` Knowledge Graph (LadybugDB Schema)
 
-This graph uses **KùzuDB** and is queried via **Cypher** using the `query_graph_cypher` tool. **DO NOT** use SQLite or SQL queries.
+This graph uses **LadybugDB** and is queried via **Cypher** using the `query_graph_cypher` tool. **DO NOT** use SQLite or SQL queries.
 
 ## Nodes
 - **`File`**: Represents a source file.
