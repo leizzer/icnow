@@ -147,7 +147,13 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
             let line = if let lbug::Value::String(l) = &row[3] { l.clone() } else { String::new() };
             
             if !file.is_empty() && !line.is_empty() {
-                usages.push(format!("- `{}` -> [{}] at {}:{}", caller_id, rel_type, file, line));
+                let mut snippet_str = String::new();
+                if let Ok(line_num) = line.parse::<usize>() {
+                    if let Some(snippet) = extract_snippet(&file, line_num, 2) {
+                        snippet_str = format!("\n```\n{}\n```", snippet);
+                    }
+                }
+                usages.push(format!("- `{}` -> [{}] at {}:{}{}", caller_id, rel_type, file, line, snippet_str));
             } else {
                 usages.push(format!("- `{}` -> [{}]", caller_id, rel_type));
             }
@@ -160,6 +166,36 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     }
 
     Ok(output.trim().to_string())
+}
+
+fn extract_snippet(file_path: &str, line_num: usize, context_lines: usize) -> Option<String> {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+    
+    let file = File::open(file_path).ok()?;
+    let reader = BufReader::new(file);
+    let mut snippet = String::new();
+    
+    let start_line = line_num.saturating_sub(context_lines).max(1);
+    let end_line = line_num + context_lines;
+    
+    for (i, line_res) in reader.lines().enumerate() {
+        let current_line = i + 1;
+        if current_line > end_line {
+            break;
+        }
+        if current_line >= start_line {
+            if let Ok(line) = line_res {
+                snippet.push_str(&format!("{:4} | {}\n", current_line, line));
+            }
+        }
+    }
+    
+    if snippet.is_empty() {
+        None
+    } else {
+        Some(snippet.trim_end().to_string())
+    }
 }
 
 fn scan_directory_recursively(dir: &std::path::Path, files: &mut Vec<String>) {

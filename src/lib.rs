@@ -43,7 +43,11 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
         Ok(db) => db,
         Err(e) => {
             let err_msg = e.to_string();
-            if err_msg.contains("Corrupted wal file") {
+            if err_msg.contains("Could not set lock on file") || err_msg.contains("IO exception: Could not set lock") {
+                tracing::warn!("DB is locked by another process. Falling back to read-only mode...");
+                let ro_config = SystemConfig::default().read_only(true);
+                Database::new(path, ro_config).map_err(|e2| format!("Failed to open DB in read-only mode: {}", e2))?
+            } else if err_msg.contains("Corrupted wal file") {
                 tracing::warn!("Corrupted WAL file detected at {}. Wiping and reinitializing...", path_str);
                 let _ = std::fs::remove_file(&path_str);
                 let wal_path = format!("{}.wal", path_str);
@@ -55,8 +59,6 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
             }
         }
     };
-        
-    tracing::info!("Leaking DB and opening connection");
     let leaked_db = Box::leak(Box::new(db));
     let conn = Connection::new(leaked_db).unwrap();
     tracing::info!("Calling init_schema");
