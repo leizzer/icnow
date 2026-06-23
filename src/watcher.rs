@@ -119,11 +119,11 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
 
             if let Some(&db_mtime) = db_files.get(&path_str) {
                 if mtime > db_mtime {
-                    tracing::info!("File modified offline: {}", path_str);
+                    tracing::debug!("File modified offline: {}", path_str);
                     files_to_reindex.push(path_str);
                 }
             } else {
-                tracing::info!("New file found offline: {}", path_str);
+                tracing::debug!("New file found offline: {}", path_str);
                 files_to_reindex.push(path_str);
             }
         }
@@ -132,7 +132,7 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     let mut files_to_delete = Vec::new();
     for db_path in db_files.keys() {
         if !current_disk_paths.contains(db_path) {
-            tracing::info!("File deleted offline: {}", db_path);
+            tracing::debug!("File deleted offline: {}", db_path);
             files_to_delete.push(db_path.clone());
         }
     }
@@ -212,7 +212,7 @@ fn handle_watcher_event(event: Event, conn: &Connection) {
         let exists = abs_path.exists();
         
         if exists && abs_path.is_file() {
-            tracing::info!("Watcher: reindexing {}", path_str);
+            tracing::debug!("Watcher: reindexing {}", path_str);
             let _ = conn.query("BEGIN TRANSACTION");
             let _ = delete_file_nodes(conn, &path_str);
             if let Err(e) = crate::parser::parse_file(&path_str, conn) {
@@ -220,7 +220,7 @@ fn handle_watcher_event(event: Event, conn: &Connection) {
             }
             let _ = conn.query("COMMIT");
         } else if !exists {
-            tracing::info!("Watcher: removing deleted file {}", path_str);
+            tracing::debug!("Watcher: removing deleted file {}", path_str);
             let _ = conn.query("BEGIN TRANSACTION");
             let _ = delete_file_nodes(conn, &path_str);
             let _ = conn.query("COMMIT");
