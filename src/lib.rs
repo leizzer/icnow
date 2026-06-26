@@ -31,6 +31,11 @@ pub fn resolve_centralized_db_path(original_db_path: &str) -> String {
     let path = std::path::Path::new(original_db_path);
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     
+    let local_icnow_dir = parent.join(".icnow");
+    if local_icnow_dir.is_dir() {
+        return local_icnow_dir.join(path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("knowledge.db"))).to_string_lossy().to_string();
+    }
+    
     let abs_parent = match parent.canonicalize() {
         Ok(p) => p.to_string_lossy().to_string(),
         Err(_) => parent.to_string_lossy().to_string()
