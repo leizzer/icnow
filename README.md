@@ -1,11 +1,11 @@
 <div align="center"><pre>
-       .----.          .----.        ____  ______ _   __ ____ _       __ 
-      /      \        /      \      /  _/ / ____// | / // __ \ |     / / 
-     |        |------|        |     / /  / /    /  |/ // / / / | /| / /  
-      \      /        \      /    _/ /  / /___ / /|  // /_/ /| |/ |/ /   
-       '----'          '----'    /___/  \____//_/ |_/ \____/ |__/|__/    
-                                                                         
-         The code knowledge graph MCP server for AI agents
+               ____  ______ _   __ ____ _       __ 
+ (•_•)        /  _/ / ____// | / // __ \ |     / / 
+ ( •_•)>⌐■-■  / /  / /    /  |/ // / / / | /| / /  
+ (⌐■_■)     _/ /  / /___ / /|  // /_/ /| |/ |/ /   
+           /___/  \____//_/ |_/ \____/ |__/|__/    
+                                                   
+    The code knowledge graph MCP server for AI agents
 </pre></div>
 
 <p align="center"><strong>10–80x faster codebase traversal · Rust · Ladybug · AST parsing · Local-first · Zero-config</strong></p>
