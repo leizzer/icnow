@@ -86,6 +86,14 @@ Add the following to your MCP `config.json`:
 # Ask your AI: "List the subclasses of BaseHandler using icnow"
 ```
 
+## Database Storage & Backup
+
+By default, `icnow` keeps your project directory 100% clean. It hashes your project path and centrally stores the graph database (`knowledge.db`) at `~/.icnow/projects/<hash>/`. You never have to worry about adding anything to your `.gitignore`.
+
+**Embedded Mode:** If you prefer to store the database locally within your project (e.g., for small repositories where you want to commit the graph data), simply create an empty `.icnow/` directory in your project root. `icnow` will automatically detect this and switch to embedded mode, saving the database safely inside that folder.
+
+Additionally, `icnow` automatically serializes and backs up all your LLM **Memories** to a JSON file on every write, ensuring you never lose your agent's knowledge even if the core graph database is completely wiped or corrupted.
+
 ## Proof
 
 **Savings on real agent workloads vs traditional tools (Grep/Bash):**
@@ -133,7 +141,7 @@ LIMIT 10
 **Find Callers of a Function:**
 ```cypher
 MATCH (caller)-[r:CALLS]->(callee)
-WHERE callee.id = 'src/auth/user.ts::User#verify_token'
+WHERE callee.id = 'src/domain/entities/user.ts::User#verify_token'
 RETURN caller.id, label(r)
 ```
 
@@ -150,7 +158,7 @@ RETURN dep.id
 
 ### Nodes
 Nodes represent files, functions, classes, models, or imports.
-- **`id`**: Must be a globally unique string (e.g., `src/models.rs::Node` or `src/auth/user.ts::User`).
+- **`id`**: Must be a globally unique string (e.g., `src/core/models.rs::Node` or `src/domain/user.ts::User`).
 - **`label`**: The domain-level type (e.g., `Function`, `Struct`, `File`, `Model`).
 - **`kind`**: The specific AST syntax item (e.g., `function_item`, `class_declaration`).
 
