@@ -247,6 +247,21 @@ fn is_process_alive(pid: u32) -> bool {
 }
 
 pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
+    let remapped = crate::resolve_centralized_db_path(&db_path);
+    let marker = std::path::Path::new(&remapped).parent().unwrap().join(".deep_scan_complete");
+    if marker.exists() {
+        if let Ok(conn) = crate::open_db_connection(&db_path) {
+            let needs_scan = if let Ok(mut res) = conn.query("MATCH (f:File) RETURN f.id LIMIT 1") {
+                res.by_ref().next().is_none()
+            } else { true };
+            
+            if needs_scan {
+                tracing::info!("Auto-triggering deep scan recovery because .deep_scan_complete exists but DB is empty.");
+                let _ = crate::lsif::scan_directory_native(&root_dir.to_string_lossy(), &db_path);
+            }
+        }
+    }
+
     let pid = std::process::id();
     let mut is_active_watcher = false;
     #[allow(unused_assignments)]

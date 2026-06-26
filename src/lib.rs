@@ -27,32 +27,79 @@ pub fn get_embedding_model() -> &'static Mutex<TextEmbedding> {
     })
 }
 
+pub fn resolve_centralized_db_path(original_db_path: &str) -> String {
+    let path = std::path::Path::new(original_db_path);
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    
+    let abs_parent = match parent.canonicalize() {
+        Ok(p) => p.to_string_lossy().to_string(),
+        Err(_) => parent.to_string_lossy().to_string()
+    };
+    
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in abs_parent.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    let hash_str = format!("{:016x}", hash);
+    
+    let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let icnow_dir = std::path::Path::new(&home_dir).join(".icnow").join("projects").join(hash_str);
+    
+    let _ = std::fs::create_dir_all(&icnow_dir);
+    
+    icnow_dir.join(path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("knowledge.db"))).to_string_lossy().to_string()
+}
+
 pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
     tracing::info!("get_or_init_db called with path: {}", path);
+    let remapped_path = resolve_centralized_db_path(path);
     let map = DBS.get_or_init(|| Mutex::new(HashMap::new()));
     
-    let path_str = path.to_string();
+    let cache_key = path.to_string();
     let mut guard = map.lock().unwrap();
-    if let Some(db) = guard.get(&path_str) {
-        tracing::info!("Found existing DB for path: {}", path_str);
+    if let Some(db) = guard.get(&cache_key) {
+        tracing::info!("Found existing DB for path: {}", cache_key);
         return Ok(*db);
     }
     
+    let path_str = remapped_path.clone();
     tracing::info!("Initializing new DB for path: {}", path_str);
-    let db = match Database::new(path, SystemConfig::default()) {
+    
+    let mut is_fresh = false;
+    if !std::path::Path::new(&path_str).exists() {
+        is_fresh = true;
+    }
+
+    let db_result = Database::new(&path_str, SystemConfig::default());
+    
+    let db = match db_result {
         Ok(db) => db,
         Err(e) => {
             let err_msg = e.to_string();
             if err_msg.contains("Could not set lock on file") || err_msg.contains("IO exception: Could not set lock") {
-                tracing::warn!("DB is locked by another process. Falling back to read-only mode...");
+                tracing::warn!("DB is locked by another process. Falling back to read-only mode with retries...");
                 let ro_config = SystemConfig::default().read_only(true);
-                Database::new(path, ro_config).map_err(|e2| format!("Failed to open DB in read-only mode: {}", e2))?
+                let mut ro_res = Database::new(&path_str, ro_config.clone());
+                for _ in 0..3 {
+                    if let Err(ro_err) = &ro_res {
+                        if ro_err.to_string().contains("Corrupted wal file") {
+                            tracing::warn!("Read-only open hit WAL corruption, retrying...");
+                            std::thread::sleep(std::time::Duration::from_millis(150));
+                            ro_res = Database::new(&path_str, ro_config.clone());
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                ro_res.map_err(|e2| format!("Failed to open DB in read-only mode: {}", e2))?
             } else if err_msg.contains("Corrupted wal file") {
                 tracing::warn!("Corrupted WAL file detected at {}. Wiping and reinitializing...", path_str);
                 let _ = std::fs::remove_file(&path_str);
                 let wal_path = format!("{}.wal", path_str);
                 let _ = std::fs::remove_file(&wal_path);
-                Database::new(path, SystemConfig::default())
+                is_fresh = true;
+                Database::new(&path_str, SystemConfig::default())
                     .map_err(|e2| format!("Failed to open DB after wiping: {}", e2))?
             } else {
                 return Err(format!("Failed to open DB: {}", e));
@@ -64,8 +111,13 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
     tracing::info!("Calling init_schema");
     init_schema(&conn)?;
     
+    if is_fresh {
+        tracing::info!("DB is fresh. Attempting to restore memories from backup...");
+        crate::api_handlers::memory::restore_all_memories(&conn, &path_str);
+    }
+    
     tracing::info!("Inserting DB into map");
-    guard.insert(path_str, leaked_db);
+    guard.insert(cache_key, leaked_db);
     
     tracing::info!("Returning DB");
     Ok(leaked_db)

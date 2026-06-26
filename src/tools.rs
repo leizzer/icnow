@@ -440,18 +440,25 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
             };
 
             crate::PAUSE_WATCHER.store(true, std::sync::atomic::Ordering::SeqCst);
-            let import_res =
-                crate::lsif::parse_and_import_lsif(&actual_lsif_path, &db_path_clone, Some(&inferred_root_clone));
+            let import_res = if actual_lsif_path == "NATIVE_AST" {
+                crate::lsif::scan_directory_native(&inferred_root_clone, &db_path_clone)
+            } else {
+                let res = crate::lsif::parse_and_import_lsif(&actual_lsif_path, &db_path_clone, Some(&inferred_root_clone));
+                let _ = std::fs::remove_file(&actual_lsif_path);
+                res
+            };
             crate::PAUSE_WATCHER.store(false, std::sync::atomic::Ordering::SeqCst);
-
-            let _ = std::fs::remove_file(&actual_lsif_path);
 
             match import_res {
                 Ok((nodes, edges)) => {
-                    ::tracing::info!("Background LSIF Import completed successfully. Nodes: {}, Edges: {}", nodes, edges);
+                    ::tracing::info!("Background LSIF/AST Import completed successfully. Nodes: {}, Edges: {}", nodes, edges);
+                    let remapped = crate::resolve_centralized_db_path(&db_path_clone);
+                    if let Some(parent) = std::path::Path::new(&remapped).parent() {
+                        let _ = std::fs::write(parent.join(".deep_scan_complete"), "");
+                    }
                 }
                 Err(e) => {
-                    ::tracing::error!("Background LSIF Import failed: {}", e);
+                    ::tracing::error!("Background Import failed: {}", e);
                 }
             }
         });
@@ -881,7 +888,7 @@ mod tests {
             keywords: vec![],
             links: vec![],
             link_type: None,
-            project_root: None,
+            project_root: "".to_string(),
         })).await;
         assert!(err_res.is_err());
         assert!(err_res.unwrap_err().contains("prefix"));
@@ -894,7 +901,7 @@ mod tests {
             keywords: vec![],
             links: vec!["src/non_existent.rs".to_string()],
             link_type: None,
-            project_root: None,
+            project_root: "".to_string(),
         })).await;
         assert!(err_res.is_err());
         assert!(err_res.unwrap_err().contains("Link target not found"));
@@ -909,7 +916,7 @@ mod tests {
                 keywords: vec!["oauth".to_string(), "jwt".to_string(), "token".to_string()],
                 links: vec!["src/main.rs".to_string()],
                 link_type: None,
-                project_root: None,
+                project_root: "".to_string(),
             })).await
             .unwrap();
         assert!(ok_res.contains("saved successfully"));
@@ -923,7 +930,7 @@ mod tests {
                 keywords: vec![],
                 links: vec!["src/lib.rs".to_string()],
                 link_type: None,
-                project_root: None,
+                project_root: "".to_string(),
             })).await
             .unwrap();
         assert!(ok_res2.contains("saved successfully"));
@@ -932,7 +939,7 @@ mod tests {
         let get_res2 = service
             .get_memory(Parameters(GetMemoryRequest {
                 id: "memory::relative_test".to_string(),
-                project_root: None,
+                project_root: "".to_string(),
             })).await
             .unwrap();
         assert!(get_res2.contains("Relative Path Test"));
@@ -942,7 +949,7 @@ mod tests {
         let get_res = service
             .get_memory(Parameters(GetMemoryRequest {
                 id: "memory::auth".to_string(),
-                project_root: None,
+                project_root: "".to_string(),
             })).await
             .unwrap();
         assert!(get_res.contains("Auth Flow"));
@@ -952,7 +959,7 @@ mod tests {
 
         // 6. Test list_memories
         let list_res = service
-            .list_memories(Parameters(ListMemoriesRequest { project_root: None })).await
+            .list_memories(Parameters(ListMemoriesRequest { project_root: "".to_string() })).await
             .unwrap();
         assert!(list_res.contains("Auth Flow"));
         assert!(list_res.contains("memory::auth"));
@@ -961,7 +968,7 @@ mod tests {
         let search_res = service
             .search_memories(Parameters(SearchMemoriesRequest {
                 query: "jwt token".to_string(),
-                project_root: None,
+                project_root: "".to_string(),
             })).await
             .unwrap();
         assert!(search_res.contains("Auth Flow"));
@@ -971,7 +978,7 @@ mod tests {
         let search_res2 = service
             .search_memories(Parameters(SearchMemoriesRequest {
                 query: "oauth".to_string(),
-                project_root: None,
+                project_root: "".to_string(),
             })).await
             .unwrap();
         assert!(search_res2.contains("Auth Flow"));

@@ -4,6 +4,22 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize)]
+pub struct BackupMemory {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub keywords: String,
+    pub embedding: String,
+    pub links: Vec<BackupLink>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct BackupLink {
+    pub target_id: String,
+    pub rel_type: String,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct MemoryLink {
     pub target_id: String,
     pub target_name: String,
@@ -155,7 +171,78 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
         edge.save(&conn).map_err(|e| format!("Failed to link {} to {}: {}", req.id, target_id, e))?;
     }
 
+    crate::api_handlers::memory::backup_all_memories(&conn, db_path);
+
     Ok(format!("Memory node '{}' saved successfully with {} links.", req.id, resolved_links.len()))
+}
+
+pub fn backup_all_memories(conn: &lbug::Connection, db_path: &str) {
+    let backup_path = std::path::Path::new(db_path).parent().unwrap().join("memories_backup.json");
+    
+    let mut backups = Vec::new();
+    let q = "MATCH (m:Memory) RETURN m.id AS id, m.name AS name, m.description AS description, m.keywords AS keywords, CAST(m.embedding AS STRING) AS embedding";
+    if let Ok(mut res) = conn.query(q) {
+        let cols = res.get_column_names();
+        let rows: Vec<_> = res.collect();
+        for row in rows {
+            let id = get_str(&row, &cols, "id");
+            let name = get_str(&row, &cols, "name");
+            let description = get_str(&row, &cols, "description");
+            let keywords = get_str(&row, &cols, "keywords");
+            let embedding = get_str(&row, &cols, "embedding");
+            
+            let mut links = Vec::new();
+            let l_q = format!("MATCH (m:Memory {{id: '{}'}})-[r]->(target) RETURN target.id AS target_id, struct_extract(r, '_LABEL') AS rel_type", crate::models::escape_cypher_string(&id));
+            if let Ok(l_res) = conn.query(&l_q) {
+                let l_cols = l_res.get_column_names();
+                for l_row in l_res {
+                    links.push(BackupLink {
+                        target_id: get_str(&l_row, &l_cols, "target_id"),
+                        rel_type: get_str(&l_row, &l_cols, "rel_type"),
+                    });
+                }
+            }
+            backups.push(BackupMemory { id, name, description, keywords, embedding, links });
+        }
+    }
+    
+    if let Ok(json) = serde_json::to_string_pretty(&backups) {
+        let _ = std::fs::write(backup_path, json);
+    }
+}
+
+pub fn restore_all_memories(conn: &lbug::Connection, db_path: &str) {
+    let backup_path = std::path::Path::new(db_path).parent().unwrap().join("memories_backup.json");
+    if let Ok(json) = std::fs::read_to_string(&backup_path) {
+        if let Ok(backups) = serde_json::from_str::<Vec<BackupMemory>>(&json) {
+            for backup in backups {
+                let mut props = HashMap::new();
+                props.insert("name".to_string(), backup.name.clone());
+                props.insert("description".to_string(), backup.description.clone());
+                props.insert("keywords".to_string(), backup.keywords.clone());
+                props.insert("embedding".to_string(), backup.embedding.clone());
+                
+                let mem_node = crate::models::Node {
+                    id: backup.id.clone(),
+                    label: "Memory".to_string(),
+                    kind: "Memory".to_string(),
+                    properties: props,
+                };
+                let _ = mem_node.save(conn);
+                
+                for link in backup.links {
+                    let edge = crate::models::Edge {
+                        id: format!("{}::{}::{}", backup.id, link.rel_type, link.target_id),
+                        source: backup.id.clone(),
+                        target: link.target_id.clone(),
+                        label: link.rel_type.clone(),
+                        properties: HashMap::new(),
+                    };
+                    let _ = edge.save(conn);
+                }
+            }
+        }
+    }
 }
 
 pub fn handle_get_memory(db_path: &str, req: GetMemoryRequest) -> Result<String, String> {
