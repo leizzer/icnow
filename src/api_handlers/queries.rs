@@ -67,13 +67,41 @@ pub fn handle_list_indexed_files(db_path: &str, _req: ListIndexedFilesRequest) -
 
 pub fn handle_get_symbol_implementation(db_path: &str, req: GetSymbolImplementationRequest) -> Result<String, String> {
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    let q = format!("MATCH (s:Symbol {{id: '{}'}}) RETURN s.source_code AS source_code", req.node_id.replace("'", "''"));
+    let q = format!("MATCH (s:Symbol {{id: '{}'}}) RETURN s.file, s.start_line, s.end_line", req.node_id.replace("'", "''"));
     let mut res = conn.query(&q).map_err(|e| format!("Failed to get impl: {e}"))?;
     
     if let Some(row) = res.by_ref().next() {
-        if let lbug::Value::String(s) = &row[0] {
-            return Ok(s.clone());
+        let file_path = match &row[0] {
+            lbug::Value::String(s) => s.clone(),
+            _ => return Err("Invalid file path".to_string()),
+        };
+        let start_line = match &row[1] {
+            lbug::Value::Int64(i) => *i as usize,
+            lbug::Value::Int32(i) => *i as usize,
+            _ => 0, // Fallback if old schema
+        };
+        let end_line = match &row[2] {
+            lbug::Value::Int64(i) => *i as usize,
+            lbug::Value::Int32(i) => *i as usize,
+            _ => 0, // Fallback if old schema
+        };
+        
+        if start_line == 0 || end_line == 0 {
+            return Err("No line pointers found. Database might be using the old schema.".to_string());
         }
+        
+        let file_contents = std::fs::read_to_string(&file_path).map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+        let lines: Vec<&str> = file_contents.lines().collect();
+        
+        let pad_start = start_line.saturating_sub(2).max(1);
+        let pad_end = (end_line + 2).min(lines.len());
+        
+        if pad_start > lines.len() {
+            return Err("Start line out of bounds".to_string());
+        }
+        
+        let snippet = lines[pad_start - 1..pad_end].join("\n");
+        return Ok(snippet);
     }
     
     Err(format!("No implementation found for {}", req.node_id))

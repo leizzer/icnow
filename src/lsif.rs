@@ -84,46 +84,14 @@ pub fn auto_generate_lsif(project_root: &str) -> Result<String> {
         return Ok(temp_file_path.to_string_lossy().to_string());
     }
 
-    // 2. Detect TypeScript/React
-    if root.join("tsconfig.json").exists() {
-        tracing::info!(
-            "Detected TypeScript/React project. Running `npx -y @sourcegraph/lsif-tsc`..."
-        );
-        let output = std::process::Command::new("npx")
-            .args(["-y", "@sourcegraph/lsif-tsc", "-p", "tsconfig.json"])
-            .current_dir(project_root)
-            .output();
+    let mut lsif_path = "NATIVE_AST".to_string();
 
-        let output = match output {
-            Ok(o) => o,
-            Err(_) => {
-                return Err(anyhow::anyhow!(
-                    "npx/NodeJS is not installed or not in PATH. Please install NodeJS and npm."
-                ));
-            }
-        };
-
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("npx @sourcegraph/lsif-tsc failed: {err}"));
-        }
-
-        // npx @sourcegraph/lsif-tsc generates `dump.lsif` in the project root
-        let dump_path = root.join("dump.lsif");
-        if dump_path.exists() {
-            return Ok(dump_path.to_string_lossy().to_string());
-        } else {
-            return Err(anyhow::anyhow!(
-                "npx @sourcegraph/lsif-tsc completed successfully but did not generate a dump.lsif file."
-            ));
-        }
-    }
-
-    // 3. Detect Ruby
+    // 2. Detect Ruby
     if root.join("Gemfile").exists() || root.join("Rakefile").exists() {
         tracing::info!("Detected Ruby project. Running `solargraph lsif`...");
         let output = std::process::Command::new("solargraph")
             .arg("lsif")
+            .arg(project_root)
             .current_dir(project_root)
             .output();
 
@@ -142,20 +110,31 @@ pub fn auto_generate_lsif(project_root: &str) -> Result<String> {
             return Err(anyhow::anyhow!("solargraph lsif failed: {err}"));
         }
 
-        let dump_path = root.join("dump.lsif");
-        if dump_path.exists() {
-            return Ok(dump_path.to_string_lossy().to_string());
+        let temp_file_path = std::env::temp_dir().join("icnow_ruby_lsif.lsif");
+        std::fs::write(&temp_file_path, output.stdout)?;
+        lsif_path = temp_file_path.to_string_lossy().to_string();
+    }
+
+    // 3. Detect TypeScript/React
+    if root.join("tsconfig.json").exists() || root.join("package.json").exists() {
+        tracing::info!(
+            "Detected TypeScript/JS/React project. Native TS AST parsing will also be executed."
+        );
+        if lsif_path != "NATIVE_AST" {
+            lsif_path = format!("{},NATIVE_AST", lsif_path);
         } else {
-            return Err(anyhow::anyhow!(
-                "solargraph lsif completed successfully but did not generate a dump.lsif file."
-            ));
+            lsif_path = "NATIVE_AST".to_string();
         }
     }
 
-    Err(anyhow::anyhow!(
-        "No supported project files (Cargo.toml, tsconfig.json, Gemfile) detected in {project_root}.\n\
-         Please generate the LSIF dump file manually and pass its path using `lsif_path`."
-    ))
+    if lsif_path == "NATIVE_AST" && !root.join("tsconfig.json").exists() && !root.join("package.json").exists() {
+        return Err(anyhow::anyhow!(
+            "No supported project files (Cargo.toml, tsconfig.json, Gemfile) detected in {project_root}.\n\
+             Please generate the LSIF dump file manually and pass its path using `lsif_path`."
+        ));
+    }
+
+    Ok(lsif_path)
 }
 
 #[derive(Default)]
@@ -503,10 +482,10 @@ fn map_symbols_to_graph(
     let mut symbol_idx_to_node_id = HashMap::new();
 
     for (idx, sym) in symbols.iter().enumerate() {
-        let file_path = if let Some(first_def_id) = sym.defs.first() {
+        let (file_path, start_line, end_line) = if let Some(first_def_id) = sym.defs.first() {
             if let Some(r) = ctx.ranges.get(first_def_id) {
                 if let Some(doc_uri) = r.document_id.and_then(|d| ctx.documents.get(&d)) {
-                    clean_path(doc_uri)
+                    (clean_path(doc_uri), r.start_line + 1, r.end_line + 1)
                 } else {
                     continue;
                 }
@@ -531,6 +510,8 @@ fn map_symbols_to_graph(
                     props.insert("name".to_string(), class_name.to_string());
                     props.insert("kind".to_string(), "class".to_string());
                     props.insert("file".to_string(), file_path.clone());
+                    props.insert("start_line".to_string(), start_line.to_string());
+                    props.insert("end_line".to_string(), end_line.to_string());
                     bulk_nodes.push((class_id.clone(), props, "Class".to_string()));
                 }
 
@@ -550,6 +531,8 @@ fn map_symbols_to_graph(
                     props.insert("name".to_string(), method_name_full);
                     props.insert("kind".to_string(), "method".to_string());
                     props.insert("file".to_string(), file_path.clone());
+                    props.insert("start_line".to_string(), start_line.to_string());
+                    props.insert("end_line".to_string(), end_line.to_string());
                     bulk_nodes.push((method_id.clone(), props, "Method".to_string()));
                 }
 
@@ -599,6 +582,8 @@ fn map_symbols_to_graph(
                 props.insert("name".to_string(), sym.name.clone());
                 props.insert("kind".to_string(), label.to_lowercase());
                 props.insert("file".to_string(), file_path.clone());
+                props.insert("start_line".to_string(), start_line.to_string());
+                props.insert("end_line".to_string(), end_line.to_string());
                 bulk_nodes.push((node_id.clone(), props, label));
             }
 
@@ -634,6 +619,8 @@ fn map_symbols_to_graph(
             props.insert("name".to_string(), sym.name.clone());
             props.insert("kind".to_string(), label.to_lowercase());
             props.insert("file".to_string(), file_path.clone());
+            props.insert("start_line".to_string(), start_line.to_string());
+            props.insert("end_line".to_string(), end_line.to_string());
             bulk_nodes.push((node_id.clone(), props, label));
         }
 
@@ -694,6 +681,36 @@ fn map_symbols_to_graph(
 struct ImportState {
     nodes_imported: usize,
     edges_imported: usize,
+}
+
+pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize, usize)> {
+    use walkdir::WalkDir;
+    let conn = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e))?;
+    
+    let mut files_scanned = 0;
+    for entry in WalkDir::new(project_root).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            let path = entry.path();
+            if let Some(ext) = path.extension() {
+                let ext_str = ext.to_string_lossy();
+                if ext_str == "ts" || ext_str == "tsx" || ext_str == "js" || ext_str == "jsx" {
+                    let path_str = path.to_string_lossy().to_string();
+                    if !path_str.contains("node_modules") && !path_str.contains("/dist/") && !path_str.contains("/build/") {
+                        if let Ok(_) = crate::parser::parse_file(&path_str, &conn) {
+                            files_scanned += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Now trigger import reconciliation explicitly
+    if let Err(e) = crate::reconciler::reconcile_imports(db_path) {
+        tracing::error!("Failed to reconcile imports during deep scan: {}", e);
+    }
+    
+    Ok((files_scanned, 0))
 }
 
 pub fn parse_and_import_lsif(

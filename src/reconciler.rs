@@ -50,9 +50,17 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
 
     let mut to_delete = Vec::new();
     let mut edges_to_create = Vec::new();
+    let mut symbol_edges_to_create = Vec::new();
 
     for (f_id, i_id, i_name) in import_rows {
-        let clean_name = i_name.trim_start_matches("./").trim_start_matches("../");
+        let mut symbol_name = None;
+        let mut source_path = i_name.clone();
+        if let Some((sym, src)) = i_name.split_once(" FROM '") {
+            symbol_name = Some(sym.to_string());
+            source_path = src.trim_end_matches('\'').to_string();
+        }
+
+        let clean_name = source_path.trim_start_matches("./").trim_start_matches("../");
         let normalized_clean = if std::path::MAIN_SEPARATOR == '\\' {
             clean_name.replace('/', "\\")
         } else {
@@ -65,6 +73,8 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
             if kf.ends_with(&format!("{sep}{normalized_clean}.rb"))
                 || kf.ends_with(&format!("{sep}{normalized_clean}.ts"))
                 || kf.ends_with(&format!("{sep}{normalized_clean}.tsx"))
+                || kf.ends_with(&format!("{sep}{normalized_clean}.js"))
+                || kf.ends_with(&format!("{sep}{normalized_clean}.jsx"))
                 || kf.ends_with(&format!("{sep}{normalized_clean}.rs"))
             {
                 resolved_target = Some(kf.clone());
@@ -82,7 +92,10 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
         }
 
         if let Some(target) = resolved_target {
-            edges_to_create.push((f_id.clone(), target));
+            edges_to_create.push((f_id.clone(), target.clone()));
+            if let Some(sym) = symbol_name {
+                symbol_edges_to_create.push((f_id.clone(), sym, target));
+            }
             to_delete.push(i_id.clone());
         }
     }
@@ -92,6 +105,19 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
         let edge_query = format!("MATCH (s:File {{id: '{}'}}), (t:File {{id: '{}'}}) MERGE (s)-[:IMPORTS]->(t)", src.replace("'", "''"), target.replace("'", "''"));
         if conn.query(&edge_query).is_ok() {
             created_count += 1;
+        }
+    }
+
+    let mut sym_created_count = 0;
+    for (src, sym_name, target_file) in symbol_edges_to_create {
+        // Find the exported symbol in the target file and link the source file directly to it!
+        let edge_query = format!("MATCH (s:File {{id: '{}'}}), (t:Symbol {{name: '{}', file: '{}'}}) MERGE (s)-[:IMPORTS]->(t)", 
+            src.replace("'", "''"), 
+            sym_name.replace("'", "''"), 
+            target_file.replace("'", "''")
+        );
+        if conn.query(&edge_query).is_ok() {
+            sym_created_count += 1;
         }
     }
 

@@ -41,6 +41,10 @@ However, do **NOT** stubbornly force pure Cypher string-slicing if you just need
 - **❌ LOSES for pure text extraction:** Forcing Cypher to extract multi-line methods is brittle. Once you know the path, just use `view_file` or `get_symbol_implementation`.
 - **❌ LOSES for simple exact string matches:** Do not use `icnow` for raw string pattern matching (e.g., finding the string `"TODO"`). Use `grep_search`.
 
+### ⚠️ CRITICAL EXECUTION RULES:
+- **DO NOT RUN MCP TOOLS IN BASH**: Never attempt to run tools like `search_memories` or `search_symbols` inside a terminal/Bash command. They are native tool calls.
+- **DO NOT GENERALIZE FAILURES**: If a tool call (especially `search_memories`) returns empty or fails, **DO NOT** assume `icnow` is broken and deactivate it. Memories are often sparse in new databases. If a memory search fails, you MUST immediately fall back to `search_symbols` to find what you need.
+
 ---
 
 ## 💡 3. The "360-Degree Context" Workflow
@@ -70,12 +74,16 @@ The graph is only as good as its data. If files are heavily modified or un-index
 
 You **MUST** create `icnow` memories when:
 - You uncover a high-level **concept about the project architecture** or complex **business logic**.
+- You want to document a **"high altitude view"** of how a complex logic flow works across multiple files/components.
 - You identify major domain boundaries (e.g., `'payment processing'`, `'user authentication'`).
+
+**Updating Outdated Memories:**
+- If you read an existing memory and notice it is outdated, incorrect, or lacks newly discovered context, you **MUST correct it** by calling `save_memory` with the same `id` and updated descriptions/links. Keep the graph accurate!
 
 **Rules:**
 - **Link Key Anchors**: Always link memory nodes to the high-level classes or files that implement the concept. (e.g., passing `"ApplicationController"` in the `links` array will automatically resolve to the node).
 - **Transient Data**: Do NOT save memories for granular details, individual bugs, or single helper methods.
-- **Kickstarting Workflow**: Always call `search_memories(query)` when starting a task to pull the domain map. It uses semantic vector search, so natural language works perfectly.
+- **Kickstarting Workflow**: Try calling `search_memories(query)` when starting a task to see if a domain map exists. **If it returns empty or fails, DO NOT STOP USING ICNOW.** Simply proceed to use `search_symbols` instead.
 
 ---
 

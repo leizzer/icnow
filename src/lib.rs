@@ -139,7 +139,7 @@ pub fn open_db_graph(path: &str) -> Result<Connection<'static>, String> {
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     let node_tables = vec![
-        "CREATE NODE TABLE IF NOT EXISTS Symbol (id STRING, name STRING, signature STRING, docstring STRING, kind STRING, source_code STRING, file STRING, line STRING, PRIMARY KEY(id))",
+        "CREATE NODE TABLE IF NOT EXISTS Symbol (id STRING, name STRING, signature STRING, docstring STRING, kind STRING, start_line INT64, end_line INT64, file STRING, line STRING, PRIMARY KEY(id))",
         "CREATE NODE TABLE IF NOT EXISTS File (id STRING, name STRING, kind STRING, last_modified INT64, PRIMARY KEY(id))",
         "CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, name STRING, description STRING, keywords STRING, embedding FLOAT[384], PRIMARY KEY(id))",
     ];

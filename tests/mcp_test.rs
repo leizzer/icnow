@@ -7,7 +7,7 @@ fn test_list() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .init();
     
-    let req = ListIndexedFilesRequest { project_root: None };
+    let req = ListIndexedFilesRequest { project_root: "".to_string() };
     match handle_list_indexed_files("/Users/cristian/projects/dgapp_bkp/knowledge.db", req) {
         Ok(res) => println!("OK: {}", res.len()),
         Err(e) => println!("ERR: {}", e),

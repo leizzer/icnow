@@ -20,7 +20,8 @@ struct ParsedNode {
     name: String,
     kind: String,
     label: String,
-    code: String,
+    start_line: usize,
+    end_line: usize,
     signature: String,
     docstring: String,
 }
@@ -42,6 +43,20 @@ fn extract_docstring(node: tree_sitter::Node, source_code: &[u8]) -> String {
     }
     docstring.reverse();
     docstring.join("\n")
+}
+
+fn extract_identifiers(node: tree_sitter::Node, source_code: &[u8], kinds: &[&str]) -> Vec<String> {
+    let mut results = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if kinds.contains(&child.kind()) {
+            if let Ok(text) = child.utf8_text(source_code) {
+                results.push(text.to_string());
+            }
+        }
+        results.extend(extract_identifiers(child, source_code, kinds));
+    }
+    results
 }
 
 fn extract_signature(code: &str, file_path: &str) -> String {
@@ -120,21 +135,22 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             (call method: [(identifier) (constant)] @call.func) @call.node
             "#,
         ))
-    } else if file_path.ends_with(".ts") || file_path.ends_with(".tsx") {
-        let lang = if file_path.ends_with(".tsx") {
-            tree_sitter_typescript::LANGUAGE_TSX.into()
-        } else {
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
-        };
+    } else if file_path.ends_with(".ts") || file_path.ends_with(".tsx") || file_path.ends_with(".js") || file_path.ends_with(".jsx") {
+        let lang = tree_sitter_typescript::LANGUAGE_TSX.into();
         Ok((
             lang,
             r#"
+            (export_statement) @export.node
+            
+            (lexical_declaration (variable_declarator name: (identifier) @name value: (arrow_function))) @function.node
             (function_declaration name: (identifier) @name) @function.node
             (method_definition name: (property_identifier) @name) @function.node
             (class_declaration name: (type_identifier) @name) @struct.node
             (interface_declaration name: (type_identifier) @name) @struct.node
+            (type_alias_declaration name: (type_identifier) @name) @struct.node
             (internal_module name: (identifier) @name) @struct.node
-            (import_statement source: (string (string_fragment) @name)) @import.node
+            
+            (import_statement source: (string (string_fragment) @import.source)) @import.node
             (call_expression function: _ @call.func) @call.node
             "#,
         ))
@@ -148,7 +164,7 @@ fn process_function_node(
     capture_map: &HashMap<&str, tree_sitter::Node>,
     file_path: &str,
     source_code: &[u8],
-) -> Result<Option<ParsedNode>> {
+) -> Result<Vec<ParsedNode>> {
     let mut name = capture_map
         .get("name")
         .and_then(|n| n.utf8_text(source_code).ok())
@@ -219,14 +235,18 @@ fn process_function_node(
     let signature = extract_signature(&code, file_path);
     let docstring = extract_docstring(func_node, source_code);
 
-    Ok(Some(ParsedNode {
+    let start_line = func_node.start_position().row + 1;
+    let end_line = func_node.end_position().row + 1;
+
+    Ok(vec![ParsedNode {
         name,
         kind,
         label,
-        code,
+        start_line,
+        end_line,
         signature,
         docstring,
-    }))
+    }])
 }
 
 fn process_struct_node(
@@ -234,7 +254,7 @@ fn process_struct_node(
     capture_map: &HashMap<&str, tree_sitter::Node>,
     file_path: &str,
     source_code: &[u8],
-) -> Result<Option<ParsedNode>> {
+) -> Result<Vec<ParsedNode>> {
     let mut name = capture_map
         .get("name")
         .and_then(|n| n.utf8_text(source_code).ok())
@@ -268,14 +288,18 @@ fn process_struct_node(
     let signature = extract_signature(&code, file_path);
     let docstring = extract_docstring(struct_node, source_code);
 
-    Ok(Some(ParsedNode {
+    let start_line = struct_node.start_position().row + 1;
+    let end_line = struct_node.end_position().row + 1;
+
+    Ok(vec![ParsedNode {
         name,
         kind,
         label,
-        code,
+        start_line,
+        end_line,
         signature,
         docstring,
-    }))
+    }])
 }
 
 fn process_import_node(
@@ -283,7 +307,7 @@ fn process_import_node(
     capture_map: &HashMap<&str, tree_sitter::Node>,
     file_path: &str,
     source_code: &[u8],
-) -> Result<Option<ParsedNode>> {
+) -> Result<Vec<ParsedNode>> {
     let kind = "use_declaration".to_string();
     let mut label = "Import".to_string();
     let mut name = String::new();
@@ -315,15 +339,69 @@ fn process_import_node(
             .to_string();
     }
 
-    let code = import_node.utf8_text(source_code)?.to_string();
-    Ok(Some(ParsedNode {
-        name,
-        kind,
-        label,
-        code,
-        signature: String::new(),
-        docstring: String::new(),
-    }))
+    let mut nodes = Vec::new();
+    let start_line = import_node.start_position().row + 1;
+    let end_line = import_node.end_position().row + 1;
+
+    if file_path.ends_with(".ts") || file_path.ends_with(".tsx") || file_path.ends_with(".js") || file_path.ends_with(".jsx") {
+        let symbols = extract_identifiers(import_node, source_code, &["identifier"]);
+        let source_text = capture_map
+            .get("import.source")
+            .and_then(|n| n.utf8_text(source_code).ok())
+            .unwrap_or("")
+            .to_string();
+        
+        for sym in symbols {
+            // Include the source in the name, e.g. "useState from 'react'" so we can reconcile it later
+            let name = format!("{} FROM '{}'", sym, source_text);
+            nodes.push(ParsedNode {
+                name,
+                kind: kind.clone(),
+                label: label.clone(),
+                start_line,
+                end_line,
+                signature: String::new(),
+                docstring: String::new(),
+            });
+        }
+    } else {
+        nodes.push(ParsedNode {
+            name,
+            kind,
+            label,
+            start_line,
+            end_line,
+            signature: String::new(),
+            docstring: String::new(),
+        });
+    }
+
+    Ok(nodes)
+}
+
+fn process_export_node(
+    export_node: tree_sitter::Node,
+    source_code: &[u8],
+) -> Result<Vec<ParsedNode>> {
+    let mut nodes = Vec::new();
+    let symbols = extract_identifiers(export_node, source_code, &["identifier", "type_identifier"]);
+    
+    let start_line = export_node.start_position().row + 1;
+    let end_line = export_node.end_position().row + 1;
+    
+    for sym in symbols {
+        nodes.push(ParsedNode {
+            name: sym,
+            kind: "export_statement".to_string(),
+            label: "Export".to_string(),
+            start_line,
+            end_line,
+            signature: String::new(),
+            docstring: String::new(),
+        });
+    }
+    
+    Ok(nodes)
 }
 
 fn process_call_node(
@@ -434,7 +512,7 @@ pub fn parse_file(file_path: &str, conn: &lbug::Connection) -> Result<FileSummar
     let (summary, bulk_nodes, bulk_edges) = parse_file_in_memory(file_path)?;
 
     let mut prep_file = conn.prepare("MERGE (n:File {id: $id}) ON CREATE SET n.name=$name, n.kind=$kind, n.last_modified=$last_modified ON MATCH SET n.name=$name, n.kind=$kind, n.last_modified=$last_modified").map_err(|e| anyhow::anyhow!("Prepare File failed: {}", e))?;
-    let mut prep_symbol = conn.prepare("MERGE (n:Symbol {id: $id}) ON CREATE SET n.name=$name, n.signature=$signature, n.docstring=$docstring, n.kind=$kind, n.source_code=$source_code, n.file=$file, n.line=$line ON MATCH SET n.name=$name, n.signature=$signature, n.docstring=$docstring, n.kind=$kind, n.source_code=$source_code, n.file=$file, n.line=$line").map_err(|e| anyhow::anyhow!("Prepare Symbol failed: {}", e))?;
+    let mut prep_symbol = conn.prepare("MERGE (n:Symbol {id: $id}) ON CREATE SET n.name=$name, n.signature=$signature, n.docstring=$docstring, n.kind=$kind, n.start_line=$start_line, n.end_line=$end_line, n.file=$file, n.line=$line ON MATCH SET n.name=$name, n.signature=$signature, n.docstring=$docstring, n.kind=$kind, n.start_line=$start_line, n.end_line=$end_line, n.file=$file, n.line=$line").map_err(|e| anyhow::anyhow!("Prepare Symbol failed: {}", e))?;
 
     for (id, props, label) in bulk_nodes {
         if label == "File" {
@@ -453,7 +531,8 @@ pub fn parse_file(file_path: &str, conn: &lbug::Connection) -> Result<FileSummar
             let signature = props.get("signature").cloned().unwrap_or_default();
             let docstring = props.get("docstring").cloned().unwrap_or_default();
             let kind = label.clone();
-            let source_code = props.get("source_code").cloned().unwrap_or_default();
+            let start_line = props.get("start_line").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+            let end_line = props.get("end_line").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
             let file = props.get("file").cloned().unwrap_or_default();
             let line = props.get("line").cloned().unwrap_or_default();
 
@@ -463,7 +542,8 @@ pub fn parse_file(file_path: &str, conn: &lbug::Connection) -> Result<FileSummar
                 ("signature", lbug::Value::String(signature)),
                 ("docstring", lbug::Value::String(docstring)),
                 ("kind", lbug::Value::String(kind)),
-                ("source_code", lbug::Value::String(source_code)),
+                ("start_line", lbug::Value::Int64(start_line)),
+                ("end_line", lbug::Value::Int64(end_line)),
                 ("file", lbug::Value::String(file)),
                 ("line", lbug::Value::String(line)),
             ]).map_err(|e| anyhow::anyhow!("Merge Symbol failed: {}", e))?;
@@ -542,12 +622,14 @@ pub fn parse_file_in_memory(
             capture_map.insert(name, capture.node);
         }
 
-        let parsed_node = if let Some(&func_node) = capture_map.get("function.node") {
+        let parsed_nodes = if let Some(&func_node) = capture_map.get("function.node") {
             process_function_node(func_node, &capture_map, file_path, source_code.as_bytes())?
         } else if let Some(&struct_node) = capture_map.get("struct.node") {
             process_struct_node(struct_node, &capture_map, file_path, source_code.as_bytes())?
         } else if let Some(&import_node) = capture_map.get("import.node") {
             process_import_node(import_node, &capture_map, file_path, source_code.as_bytes())?
+        } else if let Some(&export_node) = capture_map.get("export.node") {
+            process_export_node(export_node, source_code.as_bytes())?
         } else if let Some(&call_node) = capture_map.get("call.node") {
             process_call_node(
                 call_node,
@@ -557,12 +639,12 @@ pub fn parse_file_in_memory(
                 &mut bulk_nodes,
                 &mut bulk_edges,
             )?;
-            None
+            vec![]
         } else {
-            None
+            vec![]
         };
 
-        if let Some(node) = parsed_node {
+        for node in parsed_nodes {
             if node.name.is_empty() || node.label.is_empty() {
                 continue;
             }
@@ -572,9 +654,8 @@ pub fn parse_file_in_memory(
             props.insert("file".to_string(), file_path.to_string());
             props.insert("kind".to_string(), node.kind);
 
-            if !node.code.is_empty() {
-                props.insert("source_code".to_string(), node.code);
-            }
+            props.insert("start_line".to_string(), node.start_line.to_string());
+            props.insert("end_line".to_string(), node.end_line.to_string());
             if !node.signature.is_empty() {
                 props.insert("signature".to_string(), node.signature);
             }

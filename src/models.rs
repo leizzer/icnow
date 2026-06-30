@@ -46,7 +46,7 @@ impl Node {
             sets.push(format!("n.kind = '{}'", escape_cypher_string(&self.kind)));
         }
         let valid_keys: Vec<&str> = match table_name {
-            "Symbol" => vec!["name", "signature", "docstring", "kind", "source_code", "file", "line"],
+            "Symbol" => vec!["name", "signature", "docstring", "kind", "start_line", "end_line", "file", "line"],
             "File" => vec!["name", "kind", "last_modified"],
             "Memory" => vec!["name", "description", "keywords", "embedding"],
             _ => vec![],
@@ -54,7 +54,7 @@ impl Node {
 
         for (k, v) in &self.properties {
             if k != "id" && valid_keys.contains(&k.as_str()) {
-                if k == "embedding" {
+                if k == "embedding" || k == "start_line" || k == "end_line" {
                     sets.push(format!("n.{} = {}", k, v));
                 } else {
                     sets.push(format!("n.{} = '{}'", k, escape_cypher_string(v)));

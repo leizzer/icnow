@@ -1,11 +1,11 @@
 ---
 name: icnow
-description: Triggers whenever the agent is working with source code files (e.g., Ruby, TypeScript, React, JavaScript, Rust), needs to find symbol definitions, trace method/function call paths, inspect code blocks, understand codebase architecture, or query the semantic knowledge graph.
+description: "USE THIS SKILL FIRST for any codebase navigation, exploration, symbol lookup, or BEFORE adding new methods/functions to discover existing patterns. Essential for: finding where a variable/method is defined, tracing function calls, exploring dependencies, reading code blocks, or understanding architecture in Ruby, TypeScript, React, Rust, or JS projects. Call this BEFORE using grep or reading files."
 ---
 
 # `icnow` Semantic Graph Skill: The Masterclass
 
-Welcome to the `icnow` documentation. This tool interfaces with a high-performance **Ladybug Database (lbug)** (`knowledge.db`) to give you semantic, structurally aware access to the codebase.
+Welcome to the `icnow` documentation. This tool interfaces with a high-performance **Kuzu Graph Database** (`knowledge.db`) to give you semantic, structurally aware access to the codebase.
 
 By using `icnow`, you can navigate massive projects with **95% fewer tokens** and **100% higher accuracy** than recursive grepping. You are no longer flying blind—you have a map.
 
@@ -44,6 +44,7 @@ However, do **NOT** stubbornly force pure Cypher string-slicing if you just need
 ### ⚠️ CRITICAL EXECUTION RULES:
 - **DO NOT RUN MCP TOOLS IN BASH**: Never attempt to run tools like `search_memories` or `search_symbols` inside a terminal/Bash command. They are native tool calls.
 - **DO NOT GENERALIZE FAILURES**: If a tool call (especially `search_memories`) returns empty or fails, **DO NOT** assume `icnow` is broken and deactivate it. Memories are often sparse in new databases. If a memory search fails, you MUST immediately fall back to `search_symbols` to find what you need.
+- **DISCOVER PATTERNS BEFORE ADDING CODE**: Before adding new methods, functions, or classes, you **MUST** use `icnow` to look for existing patterns or abstractions. Use `search_symbols` and `get_symbol_info` to see how similar features are implemented. Do not reinvent the wheel.
 
 ---
 
@@ -126,7 +127,7 @@ RETURN f.id
 6.  **`parse_project_file(file_path: String)`**  
     Parses a file and adds it to the graph. Only call if `coverage_check` shows it is missing or out-of-date.
 7.  **`query_graph_cypher(query: String)`**  
-    Executes a LadybugDB Graph query using Cypher syntax (SQLite is NOT supported). Use this for custom aggregations (e.g., `MATCH (m:Symbol {kind: 'Method'}) RETURN count(m)`).
+    Executes a Kuzu Graph query using Cypher syntax (SQLite is NOT supported). Use this for custom aggregations (e.g., `MATCH (m:Symbol {kind: 'Method'}) RETURN count(m)`).
 8.  **`trace_call_path(start_node_id: String, end_node_id: String)`**  
     Traces multi-hop call paths between a specific start and end node.
 9.  **`generate_interactive_map(output_path: String, filter_path: Option<String>)`**  
