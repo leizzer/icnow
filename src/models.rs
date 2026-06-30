@@ -85,7 +85,7 @@ pub struct Edge {
     #[schemars(description = "The globally unique string ID of the target node")]
     pub target: String,
     #[schemars(
-        description = "The relationship label, e.g., 'CONTAINS' (file contains element), 'HAS_METHOD', 'CALLS' (method calls method), 'IMPORTS', 'LINKS_TO'"
+        description = "The relationship label, e.g., 'CONTAINS' (file contains element), 'DEFINES', 'CALLS' (method calls method), 'IMPORTS', 'LINKS_TO'"
     )]
     pub label: String,
     #[schemars(
@@ -110,7 +110,7 @@ impl Edge {
     pub fn save(&self, conn: &Connection) -> anyhow::Result<()> {
         let rel_table = match self.label.as_str() {
             "REL_CONTAINS" | "CONTAINS" => "REL_CONTAINS",
-            "HAS_METHOD" => "HAS_METHOD",
+            "DEFINES" => "DEFINES",
             "CALLS" => "CALLS",
             "IMPORTS" => "IMPORTS",
             "LINKS_TO" => "LINKS_TO",

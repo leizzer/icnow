@@ -71,7 +71,7 @@ mcp__icnow__list_indexed_files()
 
 **`mcp__icnow__query_graph_cypher`** - Executes a graph query using Cypher syntax. **Prefer this over SQL** for high-level semantic lookups and pattern matching.
 ```cypher
-MATCH (c:Class {name: "User"})-[:HAS_METHOD]->(m:Method) RETURN m.name ORDER BY m.name
+MATCH (c:Class {name: "User"})-[:DEFINES]->(m:Method) RETURN m.name ORDER BY m.name
 ```
 
 **`mcp__icnow__parse_project_file`** - Parses a file and adds it to the graph. Only call this if the file is new or recently modified heavily.

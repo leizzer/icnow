@@ -558,7 +558,7 @@ pub fn parse_file(file_path: &str, conn: &lbug::Connection) -> Result<FileSummar
         
         let rel_table = match label.as_str() {
             "REL_CONTAINS" | "CONTAINS" => "REL_CONTAINS",
-            "HAS_METHOD" => "HAS_METHOD",
+            "DEFINES" => "DEFINES",
             "CALLS" | _ => "CALLS",
         };
 
@@ -707,7 +707,7 @@ pub fn parse_file_in_memory(
             if node.label == "Function" || node.label == "Method" {
                 if let Some((struct_part, _method_part)) = node.name.rsplit_once("::") {
                     let struct_id = format!("{file_path}::{struct_part}");
-                    bulk_edges.push((struct_id, id, HashMap::new(), "HAS_METHOD".to_string()));
+                    bulk_edges.push((struct_id, id, HashMap::new(), "DEFINES".to_string()));
                 }
             }
         }

@@ -390,7 +390,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
 
 ## Edges
 - `(f:File)-[:REL_CONTAINS]->(s:Symbol)`: A file defines a symbol.
-- `(s1:Symbol)-[:HAS_METHOD]->(s2:Symbol)`: A class/module contains a method.
+- `(s1:Symbol)-[:DEFINES]->(s2:Symbol)`: A class/module contains a method.
 - `(s1:Symbol)-[:CALLS]->(s2:Symbol)`: A symbol calls another symbol (or inherits from).
 - `(f:File)-[:IMPORTS]->(s:Symbol)`: A file imports a module/symbol.
 - `(m:Memory)-[:LINKS_TO]->(s:Symbol)`: A memory refers to a code symbol.
@@ -621,7 +621,7 @@ pub struct TraverseGraphRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct QueryGraphCypherRequest {
     #[schemars(
-        description = "The Cypher query string to execute. Example: 'MATCH (c:Class)-[:HAS_METHOD]->(m) RETURN c.id, m.id LIMIT 10'"
+        description = "The Cypher query string to execute. Example: 'MATCH (c:Class)-[:DEFINES]->(m) RETURN c.id, m.id LIMIT 10'"
     )]
     pub query: String,
     #[schemars(

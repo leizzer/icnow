@@ -536,13 +536,13 @@ fn map_symbols_to_graph(
                     bulk_nodes.push((method_id.clone(), props, "Method".to_string()));
                 }
 
-                let class_method_edge = format!("{class_id}::HAS_METHOD::{method_id}");
+                let class_method_edge = format!("{class_id}::DEFINES::{method_id}");
                 if seen_edges.insert(class_method_edge) {
                     bulk_edges.push((
                         class_id,
                         method_id.clone(),
                         HashMap::new(),
-                        "HAS_METHOD".to_string(),
+                        "DEFINES".to_string(),
                     ));
                 }
 

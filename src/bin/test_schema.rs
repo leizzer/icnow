@@ -17,7 +17,7 @@ fn main() {
     let rel_tables = vec![
         "CREATE REL TABLE IF NOT EXISTS REL_CONTAINS (FROM File TO Symbol, FROM Symbol TO Symbol, FROM File TO File, FROM Memory TO Memory, FROM Memory TO Symbol, FROM Memory TO File, FROM Symbol TO File)",
         "CREATE REL TABLE IF NOT EXISTS CALLS (FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File)",
-        "CREATE REL TABLE IF NOT EXISTS HAS_METHOD (FROM Symbol TO Symbol, FROM File TO Symbol)",
+        "CREATE REL TABLE IF NOT EXISTS DEFINES (FROM Symbol TO Symbol, FROM File TO Symbol)",
         "CREATE REL TABLE IF NOT EXISTS LINKS_TO (FROM Memory TO Memory, FROM Memory TO Symbol, FROM Memory TO File, FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File, FROM File TO Memory, FROM Symbol TO Memory)",
         "CREATE REL TABLE IF NOT EXISTS IMPORTS (FROM File TO File, FROM File TO Symbol, FROM Symbol TO File, FROM Symbol TO Symbol)",
     ];
