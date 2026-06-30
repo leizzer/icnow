@@ -44,7 +44,7 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
 
 pub fn handle_get_file_structure(db_path: &str, req: GetFileStructureRequest) -> Result<String, String> {
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    let q = format!("MATCH (f:File {{id: '{}'}})-[:REL_CONTAINS]->(s:Symbol) RETURN s.id AS id, s.kind AS label, s.signature AS signature", req.file_path.replace("'", "''"));
+    let q = format!("MATCH (f:File {{id: '{}'}})-[:CONTAINS]->(s:Symbol) RETURN s.id AS id, s.kind AS label, s.signature AS signature", req.file_path.replace("'", "''"));
     let mut res = conn.query(&q).map_err(|e| format!("Failed to query file structure: {e}"))?;
     let mut out = String::new();
     while let Some(row) = res.next() {
@@ -144,7 +144,7 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     }
 
     // 2. Get container
-    let q_parent = format!("MATCH (parent)-[:REL_CONTAINS]->(s:Symbol {{id: '{}'}}) RETURN label(parent) AS parent_label, parent.id AS parent_id", node_id);
+    let q_parent = format!("MATCH (parent)-[:CONTAINS]->(s:Symbol {{id: '{}'}}) RETURN label(parent) AS parent_label, parent.id AS parent_id", node_id);
     if let Ok(mut res) = conn.query(&q_parent) {
         if let Some(row) = res.next() {
             output.push_str(&format!("**Container**: {} (`{}`)\n\n", row[0].to_string(), row[1].to_string()));
@@ -204,7 +204,7 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     }
 
     // 5. Get children (CONTAINS or DEFINES)
-    let q_children = format!("MATCH (s:Symbol {{id: '{}'}})-[r:REL_CONTAINS|:DEFINES]->(child:Symbol) RETURN label(r) AS rel_type, child.id AS child_id, child.kind AS child_kind", node_id);
+    let q_children = format!("MATCH (s:Symbol {{id: '{}'}})-[r:CONTAINS|:DEFINES]->(child:Symbol) RETURN label(r) AS rel_type, child.id AS child_id, child.kind AS child_kind", node_id);
     if let Ok(mut res) = conn.query(&q_children) {
         let mut children = Vec::new();
         while let Some(row) = res.next() {

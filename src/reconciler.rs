@@ -16,7 +16,7 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
     let conn = crate::open_db_connection(db_path)
         .map_err(|e| anyhow::anyhow!(e))?;
 
-    let query = "MATCH (f:File)-[r]->(i:Symbol) WHERE struct_extract(r, '_LABEL') = 'REL_CONTAINS' AND i.kind = 'Import' RETURN f.id, i.id, i.name";
+    let query = "MATCH (f:File)-[r]->(i:Symbol) WHERE struct_extract(r, '_LABEL') = 'CONTAINS' AND i.kind = 'Import' RETURN f.id, i.id, i.name";
 
     let mut res = match conn.query(query) {
         Ok(r) => r,

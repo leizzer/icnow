@@ -557,7 +557,7 @@ pub fn parse_file(file_path: &str, conn: &lbug::Connection) -> Result<FileSummar
         let tgt_table = if target.starts_with('/') && !target.contains("::") { "File" } else { "Symbol" };
         
         let rel_table = match label.as_str() {
-            "REL_CONTAINS" | "CONTAINS" => "REL_CONTAINS",
+            "CONTAINS" => "CONTAINS",
             "DEFINES" => "DEFINES",
             "CALLS" | _ => "CALLS",
         };

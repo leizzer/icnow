@@ -20,7 +20,7 @@ Before using the tools, you must understand how the code is modeled:
   - `Symbol`: Represents a code construct. Key `kind`s include: `Class`, `Method`, `Macro` (e.g., Rails `has_many`, `scope`), `Struct`, `Variable`, and `Import`.
   - `Unresolved`: Call-site placeholders used to track method invocations before linking.
 - **Edges**:
-  - `REL_CONTAINS`: Links a `File` or `Class` to the `Symbols` it defines.
+  - `CONTAINS`: Links a `File` or `Class` to the `Symbols` it defines.
   - `CALLS`: Links a caller `Symbol` to the target it invokes. Includes exact `file` and `line` metadata.
   - `IMPORTS`: Links a file/symbol to a dependency.
 
@@ -93,7 +93,7 @@ When using `query_graph_cypher`, remember that nodes are either `Symbol` or `Fil
 
 **Example 1: Count all methods inside a specific file**
 ```cypher
-MATCH (f:File {id: '/Users/path/to/app/models/user.rb'})-[:REL_CONTAINS]->(m:Symbol {kind: 'Method'})
+MATCH (f:File {id: '/Users/path/to/app/models/user.rb'})-[:CONTAINS]->(m:Symbol {kind: 'Method'})
 RETURN count(m)
 ```
 

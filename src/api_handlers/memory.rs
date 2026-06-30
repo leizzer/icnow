@@ -158,7 +158,7 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
 
     for target_id in &resolved_links {
         let rel = req.link_type.as_deref().unwrap_or_else(|| {
-            if target_id.starts_with("memory::") { "LINKS_TO" } else { "LINKS_TO" }
+            if target_id.starts_with("memory::") { "REFERENCES" } else { "REFERENCES" }
         });
         
         let edge = crate::models::Edge {
