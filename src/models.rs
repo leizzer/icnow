@@ -85,7 +85,7 @@ pub struct Edge {
     #[schemars(description = "The globally unique string ID of the target node")]
     pub target: String,
     #[schemars(
-        description = "The relationship label, e.g., 'CONTAINS' (file contains element), 'DEFINES', 'CALLS' (method calls method), 'IMPORTS', 'REFERENCES'"
+        description = "The relationship label, e.g., 'CONTAINS' (file contains element), 'DEFINES', 'CALLS' (method calls method), 'IMPORTS', 'REFERENCES', 'INHERITS', 'INSTANTIATES'"
     )]
     pub label: String,
     #[schemars(
@@ -112,6 +112,8 @@ impl Edge {
             "CONTAINS" => "CONTAINS",
             "DEFINES" => "DEFINES",
             "CALLS" => "CALLS",
+            "INHERITS" => "INHERITS",
+            "INSTANTIATES" => "INSTANTIATES",
             "IMPORTS" => "IMPORTS",
             "REFERENCES" => "REFERENCES",
             _ => "CALLS",

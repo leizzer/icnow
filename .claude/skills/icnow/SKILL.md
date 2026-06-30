@@ -22,6 +22,8 @@ Before using the tools, you must understand how the code is modeled:
 - **Edges**:
   - `CONTAINS`: Links a `File` or `Class` to the `Symbols` it defines.
   - `CALLS`: Links a caller `Symbol` to the target it invokes. Includes exact `file` and `line` metadata.
+  - `INHERITS`: Links a `Class` or `Struct` to its superclass or trait.
+  - `INSTANTIATES`: Links a caller `Symbol` to the `Class` or `Struct` it instantiates.
   - `IMPORTS`: Links a file/symbol to a dependency.
 
 > **Crucial Advantage:** Because `icnow` natively isolates `Method` nodes from `Macro` nodes, you can run exact counts (e.g., "How many methods in user.rb?") using Cypher without ever having to manually filter out `has_many` or `attr_accessor` noise!

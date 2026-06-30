@@ -391,7 +391,9 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
 ## Edges
 - `(f:File)-[:CONTAINS]->(s:Symbol)`: A file defines a symbol.
 - `(s1:Symbol)-[:DEFINES]->(s2:Symbol)`: A class/module contains a method.
-- `(s1:Symbol)-[:CALLS]->(s2:Symbol)`: A symbol calls another symbol (or inherits from).
+- `(s1:Symbol)-[:CALLS]->(s2:Symbol)`: A symbol calls another symbol.
+- `(s1:Symbol)-[:INHERITS]->(s2:Symbol)`: A class inherits from another class, or a struct implements a trait.
+- `(s1:Symbol)-[:INSTANTIATES]->(s2:Symbol)`: A function/method instantiates a class or struct (e.g., via `new`).
 - `(f:File)-[:IMPORTS]->(s:Symbol)`: A file imports a module/symbol.
 - `(m:Memory)-[:REFERENCES]->(s:Symbol|f:File)`: A memory refers to a code symbol or file.
 

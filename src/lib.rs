@@ -151,6 +151,8 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         "CREATE REL TABLE IF NOT EXISTS CONTAINS (FROM File TO Symbol, FROM Symbol TO Symbol, FROM File TO File, FROM Memory TO Memory, FROM Memory TO Symbol, FROM Memory TO File, FROM Symbol TO File)",
         "CREATE REL TABLE IF NOT EXISTS CALLS (FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File)",
         "CREATE REL TABLE IF NOT EXISTS DEFINES (FROM Symbol TO Symbol, FROM File TO Symbol)",
+        "CREATE REL TABLE IF NOT EXISTS INHERITS (FROM Symbol TO Symbol)",
+        "CREATE REL TABLE IF NOT EXISTS INSTANTIATES (FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File)",
         "CREATE REL TABLE IF NOT EXISTS REFERENCES (FROM Memory TO Memory, FROM Memory TO Symbol, FROM Memory TO File, FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File, FROM File TO Memory, FROM Symbol TO Memory)",
         "CREATE REL TABLE IF NOT EXISTS IMPORTS (FROM File TO File, FROM File TO Symbol, FROM Symbol TO File, FROM Symbol TO Symbol)",
     ];

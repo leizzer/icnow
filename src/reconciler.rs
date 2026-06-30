@@ -157,7 +157,6 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
         }
 
         // Advanced Import Resolution: Resolve floating function calls
-        // If the source file has an Unresolved call with the same name, link the caller directly to the imported symbol
         let resolve_calls_query = format!(
             "MATCH (caller)-[:CALLS]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}), (t:Symbol {{name: '{}', file: '{}'}}) \
              MERGE (caller)-[:CALLS]->(t) \
@@ -168,6 +167,18 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
             target_file.replace("'", "''")
         );
         let _ = conn.query(&resolve_calls_query);
+
+        // Advanced Import Resolution: Resolve floating instantiations
+        let resolve_inst_query = format!(
+            "MATCH (caller)-[:INSTANTIATES]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}), (t:Symbol {{name: '{}', file: '{}'}}) \
+             MERGE (caller)-[:INSTANTIATES]->(t) \
+             DETACH DELETE u",
+            sym_name.replace("'", "''"),
+            src.replace("'", "''"),
+            sym_name.replace("'", "''"),
+            target_file.replace("'", "''")
+        );
+        let _ = conn.query(&resolve_inst_query);
     }
 
     for i_id in to_delete {

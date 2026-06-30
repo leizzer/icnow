@@ -119,6 +119,8 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             (struct_item name: (type_identifier) @name) @struct.node
             (use_declaration) @import.node
             (call_expression function: _ @call.func) @call.node
+            (impl_item trait: _ @inherits.target type: _ @inherits.source) @inherits.node
+            (struct_expression name: _ @instantiates.func) @instantiates.node
             "#,
         ))
     } else if file_path.ends_with(".rb") {
@@ -133,6 +135,8 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             (call method: (identifier) @import.method arguments: (argument_list (string (string_content) @name))) @import.node
             (call receiver: _ @call.receiver method: [(identifier) (constant)] @call.func) @call.node
             (call method: [(identifier) (constant)] @call.func) @call.node
+            (class name: _ @inherits.source superclass: (superclass _ @inherits.target)) @inherits.node
+            (call receiver: _ @instantiates.func method: (identifier) @_new (#eq? @_new "new")) @instantiates.node
             "#,
         ))
     } else if file_path.ends_with(".ts") || file_path.ends_with(".tsx") || file_path.ends_with(".js") || file_path.ends_with(".jsx") {
@@ -152,6 +156,9 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             
             (import_statement source: (string (string_fragment) @import.source)) @import.node
             (call_expression function: _ @call.func) @call.node
+            
+            (class_declaration name: (type_identifier) @inherits.source (class_heritage (extends_clause value: [(identifier) (type_identifier)] @inherits.target))) @inherits.node
+            (new_expression constructor: _ @instantiates.func) @instantiates.node
             "#,
         ))
     } else {
@@ -411,14 +418,18 @@ fn process_call_node(
     source_code: &[u8],
     bulk_nodes: &mut Vec<(String, HashMap<String, String>, String)>,
     bulk_edges: &mut Vec<(String, String, HashMap<String, String>, String)>,
+    is_instantiates: bool,
 ) -> Result<()> {
+    let func_key = if is_instantiates { "instantiates.func" } else { "call.func" };
+    let receiver_key = if is_instantiates { "instantiates.receiver" } else { "call.receiver" };
+
     let func_text = capture_map
-        .get("call.func")
+        .get(func_key)
         .and_then(|n| n.utf8_text(source_code).ok())
         .unwrap_or("")
         .to_string();
     let receiver_text = capture_map
-        .get("call.receiver")
+        .get(receiver_key)
         .and_then(|n| n.utf8_text(source_code).ok())
         .unwrap_or("")
         .to_string();
@@ -488,7 +499,45 @@ fn process_call_node(
         props.insert("line".to_string(), line.to_string());
         bulk_nodes.push((target_id.clone(), props, "Unresolved".to_string()));
 
-        bulk_edges.push((source_id, target_id, HashMap::new(), "CALLS".to_string()));
+        let rel_type = if is_instantiates { "INSTANTIATES" } else { "CALLS" };
+        bulk_edges.push((source_id, target_id, HashMap::new(), rel_type.to_string()));
+    }
+
+    Ok(())
+}
+
+fn process_inherits_node(
+    inherits_node: tree_sitter::Node,
+    capture_map: &HashMap<&str, tree_sitter::Node>,
+    file_path: &str,
+    source_code: &[u8],
+    bulk_nodes: &mut Vec<(String, HashMap<String, String>, String)>,
+    bulk_edges: &mut Vec<(String, String, HashMap<String, String>, String)>,
+) -> Result<()> {
+    let source_text = capture_map
+        .get("inherits.source")
+        .and_then(|n| n.utf8_text(source_code).ok())
+        .unwrap_or("")
+        .to_string();
+    let target_text = capture_map
+        .get("inherits.target")
+        .and_then(|n| n.utf8_text(source_code).ok())
+        .unwrap_or("")
+        .to_string();
+
+    if !source_text.is_empty() && !target_text.is_empty() {
+        let source_id = format!("{file_path}::{source_text}");
+        let line = inherits_node.start_position().row + 1;
+        let target_id = format!("{}::unresolved_inherits_{}", file_path, line);
+
+        let mut props = HashMap::new();
+        props.insert("name".to_string(), target_text.clone());
+        props.insert("kind".to_string(), "unresolved_symbol".to_string());
+        props.insert("file".to_string(), file_path.to_string());
+        props.insert("line".to_string(), line.to_string());
+        bulk_nodes.push((target_id.clone(), props, "Unresolved".to_string()));
+
+        bulk_edges.push((source_id, target_id, HashMap::new(), "INHERITS".to_string()));
     }
 
     Ok(())
@@ -633,6 +682,28 @@ pub fn parse_file_in_memory(
         } else if let Some(&call_node) = capture_map.get("call.node") {
             process_call_node(
                 call_node,
+                &capture_map,
+                file_path,
+                source_code.as_bytes(),
+                &mut bulk_nodes,
+                &mut bulk_edges,
+                false,
+            )?;
+            vec![]
+        } else if let Some(&inst_node) = capture_map.get("instantiates.node") {
+            process_call_node(
+                inst_node,
+                &capture_map,
+                file_path,
+                source_code.as_bytes(),
+                &mut bulk_nodes,
+                &mut bulk_edges,
+                true,
+            )?;
+            vec![]
+        } else if let Some(&inherits_node) = capture_map.get("inherits.node") {
+            process_inherits_node(
+                inherits_node,
                 &capture_map,
                 file_path,
                 source_code.as_bytes(),
