@@ -113,27 +113,51 @@ impl Service<RoleServer> for ResourceHandler {
                         .map_err(|e| format!("Failed to open DB: {e}"))?;
                     
                     let escaped_id = id.replace("'", "''");
-                    let query = format!("MATCH (n {{id: '{}'}}) RETURN n.kind, n.name, n.signature, n.docstring, n.source_code", escaped_id);
-                    
-                    let mut res = conn.query(&query).map_err(|e| e.to_string())?;
-                    
-                    if let Some(row) = res.next() {
-                        let kind = match &row[0] { lbug::Value::String(s) => s.clone(), _ => "Node".to_string() };
-                        let name = match &row[1] { lbug::Value::String(s) => s.clone(), _ => id.clone() };
-                        let signature = match &row[2] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
-                        let docstring = match &row[3] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
-                        let source_code = match &row[4] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
-                        
+                    let query_label = format!("MATCH (n {{id: '{}'}}) RETURN label(n)", escaped_id);
+                    let mut res_label = conn.query(&query_label).map_err(|e| e.to_string())?;
+                    let label = if let Some(row) = res_label.next() {
+                        match &row[0] {
+                            lbug::Value::String(s) => s.clone(),
+                            _ => return Err(format!("Node {} has invalid label", id)),
+                        }
+                    } else {
+                        return Err(format!("Node {} not found in graph", id));
+                    };
+
+                    if label == "File" {
+                        let source_code = std::fs::read_to_string(&id)
+                            .unwrap_or_else(|_| format!("Could not read file from disk: {}", id));
                         Ok(json!({
                             "id": id,
-                            "kind": kind,
-                            "name": name,
-                            "signature": signature,
-                            "docstring": docstring,
+                            "kind": "File",
+                            "name": id,
+                            "signature": "",
+                            "docstring": "",
                             "source_code": source_code,
                         }))
                     } else {
-                        Err(format!("Node {} not found", id))
+                        let query = format!("MATCH (n:Symbol {{id: '{}'}}) RETURN n.kind, n.name, n.signature, n.docstring, n.source_code", escaped_id);
+                        
+                        let mut res = conn.query(&query).map_err(|e| e.to_string())?;
+                        
+                        if let Some(row) = res.next() {
+                            let kind = match &row[0] { lbug::Value::String(s) => s.clone(), _ => "Node".to_string() };
+                            let name = match &row[1] { lbug::Value::String(s) => s.clone(), _ => id.clone() };
+                            let signature = match &row[2] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
+                            let docstring = match &row[3] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
+                            let source_code = match &row[4] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
+                            
+                            Ok(json!({
+                                "id": id,
+                                "kind": kind,
+                                "name": name,
+                                "signature": signature,
+                                "docstring": docstring,
+                                "source_code": source_code,
+                            }))
+                        } else {
+                            Err(format!("Symbol {} not found", id))
+                        }
                     }
                 }).await.map_err(|e| ErrorData {
                     code: ErrorCode(-32000),
