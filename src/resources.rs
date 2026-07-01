@@ -120,6 +120,54 @@ impl Service<RoleServer> for ResourceHandler {
 
                 Ok(ServerResult::ListResourceTemplatesResult(result))
             }
+            ClientRequest::ListPromptsRequest(_) => {
+                let result = serde_json::from_value(json!({
+                    "prompts": [{
+                        "name": "create_memory",
+                        "description": "Instruct the agent to evaluate the context and save an architectural decision or project memory.",
+                        "arguments": [
+                            {
+                                "name": "focus",
+                                "description": "Optional focus area (e.g. 'auth flow', 'database schema')",
+                                "required": false
+                            }
+                        ]
+                    }]
+                })).unwrap();
+                
+                Ok(ServerResult::ListPromptsResult(result))
+            }
+            ClientRequest::GetPromptRequest(req) => {
+                if req.params.name == "create_memory" {
+                    let focus = req.params.arguments.as_ref()
+                        .and_then(|args| args.get("focus"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("general architecture and patterns");
+                        
+                    let text = format!("Please review our current conversation and the work we just completed, paying special attention to: {}.\n\nExtract the key architectural decisions, discovered patterns, or important context we discussed. Then, use the `save_memory` tool to persist these insights in the project graph so future agents can reference them. Keep the description concise but informative, and use descriptive keywords.", focus);
+                    
+                    let result = serde_json::from_value(json!({
+                        "description": "Agent instruction to save a memory",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": {
+                                    "type": "text",
+                                    "text": text
+                                }
+                            }
+                        ]
+                    })).unwrap();
+                    
+                    Ok(ServerResult::GetPromptResult(result))
+                } else {
+                    Err(ErrorData {
+                        code: ErrorCode::INVALID_PARAMS,
+                        message: format!("Unknown prompt: {}", req.params.name).into(),
+                        data: None,
+                    })
+                }
+            }
             ClientRequest::ReadResourceRequest(req) => {
                 let uri = req.params.uri.clone();
                 let as_json = uri.ends_with(".json");
