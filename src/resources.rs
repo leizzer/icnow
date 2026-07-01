@@ -330,6 +330,9 @@ impl Service<RoleServer> for ResourceHandler {
                                     "listChanged": false,
                                     "subscribe": false
                                 }));
+                                caps_obj.insert("prompts".to_string(), json!({
+                                    "listChanged": false
+                                }));
                             }
                         }
                         if let Ok(new_info) = serde_json::from_value(json_info) {
@@ -353,6 +356,9 @@ impl Service<RoleServer> for ResourceHandler {
                     caps_obj.insert("resources".to_string(), json!({
                         "listChanged": false,
                         "subscribe": false
+                    }));
+                    caps_obj.insert("prompts".to_string(), json!({
+                        "listChanged": false
                     }));
                 }
             }
