@@ -2,7 +2,7 @@ use rmcp::{
     Service,
     model::{
         ClientNotification, ClientRequest, ErrorCode, ErrorData, ListResourcesResult, ReadResourceResult,
-        ResourceContents, ServerInfo, ServerResult, ResourceTemplate,
+        ResourceContents, ServerInfo, ServerResult, ResourceTemplate, Resource,
     },
     service::{NotificationContext, RequestContext, RoleServer, DynService},
 };
@@ -29,11 +29,49 @@ impl Service<RoleServer> for ResourceHandler {
     ) -> Result<ServerResult, ErrorData> {
         match request {
             ClientRequest::ListResourcesRequest(_req) => {
-                Ok(ServerResult::ListResourcesResult(ListResourcesResult {
-                    resources: vec![],
-                    meta: None,
-                    next_cursor: None,
-                }))
+                let db_path = self.inner.resolve_db_path_and_watch(None, None, None);
+                let result = tokio::task::spawn_blocking(move || -> Result<Vec<serde_json::Value>, String> {
+                    let conn = crate::open_db_connection(&db_path)
+                        .map_err(|e| format!("Failed to open DB: {e}"))?;
+                    
+                    let query = "MATCH (f:File) RETURN f.id ORDER BY f.id LIMIT 1000";
+                    let mut res = conn.query(query).map_err(|e| e.to_string())?;
+                    
+                    let mut files = Vec::new();
+                    while let Some(row) = res.next() {
+                        if let lbug::Value::String(id) = &row[0] {
+                            files.push(json!({
+                                "uri": format!("icnow://node/{}", urlencoding::encode(id)),
+                                "name": id.clone(),
+                                "mimeType": "text/markdown",
+                                "description": "Source file"
+                            }));
+                        }
+                    }
+                    Ok(files)
+                }).await.map_err(|e| ErrorData {
+                    code: ErrorCode(-32000),
+                    message: format!("Task error: {}", e).into(),
+                    data: None,
+                })?;
+
+                match result {
+                    Ok(files) => {
+                        let resources = files.into_iter().filter_map(|val| {
+                            serde_json::from_value::<Resource>(val).ok()
+                        }).collect();
+                        Ok(ServerResult::ListResourcesResult(ListResourcesResult {
+                            resources,
+                            meta: None,
+                            next_cursor: None,
+                        }))
+                    },
+                    Err(e) => Err(ErrorData {
+                        code: ErrorCode(-32000),
+                        message: e.into(),
+                        data: None,
+                    }),
+                }
             }
             ClientRequest::ListResourceTemplatesRequest(_req) => {
                 // Return a template for the node so clients can expose it via the @ menu

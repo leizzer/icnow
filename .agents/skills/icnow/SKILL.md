@@ -154,3 +154,30 @@ Every time you call an `icnow` tool, you must track it in a daily CSV file at `/
 -   `enough`: Did the graph provide enough context to prevent you from using native grep/read? (`true`/`false`/`pending`)
 -   `why_not_enough`: Explain exactly why `icnow` was not enough and you had to fall back. Use `"N/A"` if enough is true.
 -   `target_information`: Describe what information you were trying to find in the database.
+
+---
+
+## 🔗 8. MCP Resources & Claude Code Config
+
+`icnow` exposes codebase files and symbols directly as **MCP Resources**. This allows users and compatible clients (like Claude Code and Claude Desktop) to attach code context seamlessly via the UI (e.g., using `@` mentions).
+
+### How to use Resources in Chat
+- Type `@` in a compatible client to bring up the context menu.
+- Select **Graph Node** from the templates menu, and type the node ID (e.g., `src/main.rs`). 
+- Alternatively, search through the exposed **Files** (which are exposed as direct resources up to the first 1000 files in the project).
+- You can also directly type a URI into the chat like: `read icnow://node/src%2Fmain.rs` (use URL-encoding for slashes in symbol IDs, or just raw paths). Add `/json` at the end to get raw JSON instead of markdown.
+
+### Global Claude Code Configuration
+To use `icnow` effectively in the Claude Code CLI globally, add it to your `~/.claude.json` configuration file:
+
+```json
+{
+  "mcpServers": {
+    "icnow": {
+      "command": "icnow",
+      "args": []
+    }
+  }
+}
+```
+*Note: Make sure the `icnow` binary is installed in your `$PATH` (e.g. via `cargo install --path .`).*
