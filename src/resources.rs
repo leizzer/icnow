@@ -34,21 +34,37 @@ impl Service<RoleServer> for ResourceHandler {
                     let conn = crate::open_db_connection(&db_path)
                         .map_err(|e| format!("Failed to open DB: {e}"))?;
                     
-                    let query = "MATCH (f:File) RETURN f.id ORDER BY f.id LIMIT 1000";
-                    let mut res = conn.query(query).map_err(|e| e.to_string())?;
+                    let mut items = Vec::new();
                     
-                    let mut files = Vec::new();
-                    while let Some(row) = res.next() {
-                        if let lbug::Value::String(id) = &row[0] {
-                            files.push(json!({
-                                "uri": format!("icnow://node/{}", urlencoding::encode(id)),
-                                "name": id.clone(),
-                                "mimeType": "text/markdown",
-                                "description": "Source file"
-                            }));
+                    let file_query = "MATCH (f:File) RETURN f.id ORDER BY f.id LIMIT 1000";
+                    if let Ok(mut res) = conn.query(file_query) {
+                        while let Some(row) = res.next() {
+                            if let lbug::Value::String(id) = &row[0] {
+                                items.push(json!({
+                                    "uri": format!("icnow://node/{}", id),
+                                    "name": id.clone(),
+                                    "mimeType": "text/markdown",
+                                    "description": "Source file"
+                                }));
+                            }
                         }
                     }
-                    Ok(files)
+
+                    let mem_query = "MATCH (m:Memory) RETURN m.id, m.name ORDER BY m.id LIMIT 1000";
+                    if let Ok(mut res) = conn.query(mem_query) {
+                        while let Some(row) = res.next() {
+                            if let (lbug::Value::String(id), lbug::Value::String(name)) = (&row[0], &row[1]) {
+                                items.push(json!({
+                                    "uri": format!("icnow://memory/{}", id),
+                                    "name": format!("Memory: {}", name),
+                                    "mimeType": "text/markdown",
+                                    "description": "Project Memory"
+                                }));
+                            }
+                        }
+                    }
+                    
+                    Ok(items)
                 }).await.map_err(|e| ErrorData {
                     code: ErrorCode(-32000),
                     message: format!("Task error: {}", e).into(),
@@ -74,90 +90,113 @@ impl Service<RoleServer> for ResourceHandler {
                 }
             }
             ClientRequest::ListResourceTemplatesRequest(_req) => {
-                // Return a template for the node so clients can expose it via the @ menu
-                let template: ResourceTemplate = serde_json::from_value(json!({
+                let node_template: ResourceTemplate = serde_json::from_value(json!({
                     "uriTemplate": "icnow://node/{node_id}",
                     "name": "Graph Node",
                     "description": "Read a specific symbol or file from the codebase graph",
                     "mimeType": "text/markdown"
                 })).unwrap();
 
+                let memory_template: ResourceTemplate = serde_json::from_value(json!({
+                    "uriTemplate": "icnow://memory/{memory_id}",
+                    "name": "Project Memory",
+                    "description": "Read a saved project memory or architectural decision",
+                    "mimeType": "text/markdown"
+                })).unwrap();
+
                 let result = serde_json::from_value(json!({
-                    "resourceTemplates": [template]
+                    "resourceTemplates": [node_template, memory_template]
                 })).unwrap();
 
                 Ok(ServerResult::ListResourceTemplatesResult(result))
             }
             ClientRequest::ReadResourceRequest(req) => {
                 let uri = req.params.uri.clone();
-                let Some(node_id) = uri.strip_prefix("icnow://node/") else {
-                    return Err(ErrorData {
-                        code: ErrorCode(-32602),
-                        message: "Invalid resource URI. Must start with icnow://node/".to_string().into(),
-                        data: None,
-                    });
-                };
-                
-                let (id, as_json) = if let Some(stripped) = node_id.strip_suffix("/json") {
-                    (stripped, true)
-                } else {
-                    (node_id, false)
-                };
-                
-                let id = urlencoding::decode(id).unwrap_or(Cow::Borrowed(id)).to_string();
-
-                let db_path = self.inner.resolve_db_path_and_watch(None, None, Some(&id));
+                let as_json = uri.ends_with(".json");
+                let db_path = self.inner.resolve_db_path_and_watch(None, None, None);
+                let uri_clone = uri.clone();
                 
                 let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
-                    let conn = crate::open_db_connection(&db_path)
-                        .map_err(|e| format!("Failed to open DB: {e}"))?;
-                    
-                    let escaped_id = id.replace("'", "''");
-                    let query_label = format!("MATCH (n {{id: '{}'}}) RETURN label(n)", escaped_id);
-                    let mut res_label = conn.query(&query_label).map_err(|e| e.to_string())?;
-                    let label = if let Some(row) = res_label.next() {
-                        match &row[0] {
-                            lbug::Value::String(s) => s.clone(),
-                            _ => return Err(format!("Node {} has invalid label", id)),
-                        }
-                    } else {
-                        return Err(format!("Node {} not found in graph", id));
-                    };
-
-                    if label == "File" {
-                        let source_code = std::fs::read_to_string(&id)
-                            .unwrap_or_else(|_| format!("Could not read file from disk: {}", id));
-                        Ok(json!({
-                            "id": id,
-                            "kind": "File",
-                            "name": id,
-                            "signature": "",
-                            "docstring": "",
-                            "source_code": source_code,
-                        }))
-                    } else {
-                        let query = format!("MATCH (n:Symbol {{id: '{}'}}) RETURN n.kind, n.name, n.signature, n.docstring, n.source_code", escaped_id);
-                        
+                    let uri = uri_clone;
+                    if uri.starts_with("icnow://memory/") {
+                        let id = uri.trim_start_matches("icnow://memory/").to_string();
+                        let conn = crate::open_db_connection(&db_path)
+                            .map_err(|e| format!("Failed to open DB: {e}"))?;
+                            
+                        let escaped_id = id.replace("'", "''");
+                        let query = format!("MATCH (m:Memory {{id: '{}'}}) RETURN m.name, m.description, m.keywords", escaped_id);
                         let mut res = conn.query(&query).map_err(|e| e.to_string())?;
                         
                         if let Some(row) = res.next() {
-                            let kind = match &row[0] { lbug::Value::String(s) => s.clone(), _ => "Node".to_string() };
-                            let name = match &row[1] { lbug::Value::String(s) => s.clone(), _ => id.clone() };
-                            let signature = match &row[2] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
-                            let docstring = match &row[3] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
-                            let source_code = match &row[4] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
+                            let name = match &row[0] { lbug::Value::String(s) => s.clone(), _ => id.clone() };
+                            let description = match &row[1] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
+                            let keywords = match &row[2] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
                             
                             Ok(json!({
                                 "id": id,
-                                "kind": kind,
+                                "kind": "Memory",
                                 "name": name,
-                                "signature": signature,
-                                "docstring": docstring,
+                                "signature": format!("Keywords: {}", keywords),
+                                "docstring": description,
+                                "source_code": ""
+                            }))
+                        } else {
+                            Err(format!("Memory {} not found", id))
+                        }
+                    } else if uri.starts_with("icnow://node/") {
+                        let id = urlencoding::decode(uri.trim_start_matches("icnow://node/")).unwrap_or(Cow::Borrowed("")).to_string();
+                        let conn = crate::open_db_connection(&db_path)
+                            .map_err(|e| format!("Failed to open DB: {e}"))?;
+                        
+                        let escaped_id = id.replace("'", "''");
+                        let query_label = format!("MATCH (n {{id: '{}'}}) RETURN label(n)", escaped_id);
+                        let mut res_label = conn.query(&query_label).map_err(|e| e.to_string())?;
+                        let label = if let Some(row) = res_label.next() {
+                            match &row[0] {
+                                lbug::Value::String(s) => s.clone(),
+                                _ => return Err(format!("Node {} has invalid label", id)),
+                            }
+                        } else {
+                            return Err(format!("Node {} not found in graph", id));
+                        };
+
+                        if label == "File" {
+                            let source_code = std::fs::read_to_string(&id)
+                                .unwrap_or_else(|_| format!("Could not read file from disk: {}", id));
+                            Ok(json!({
+                                "id": id,
+                                "kind": "File",
+                                "name": id,
+                                "signature": "",
+                                "docstring": "",
                                 "source_code": source_code,
                             }))
                         } else {
-                            Err(format!("Symbol {} not found", id))
+                            let query = format!("MATCH (n:Symbol {{id: '{}'}}) RETURN n.kind, n.name, n.signature, n.docstring, n.source_code", escaped_id);
+                            
+                            let mut res = conn.query(&query).map_err(|e| e.to_string())?;
+                            
+                            if let Some(row) = res.next() {
+                                let kind = match &row[0] { lbug::Value::String(s) => s.clone(), _ => "Node".to_string() };
+                                let name = match &row[1] { lbug::Value::String(s) => s.clone(), _ => id.clone() };
+                                let signature = match &row[2] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
+                                let docstring = match &row[3] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
+                                let source_code = match &row[4] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
+                                
+                                Ok(json!({
+                                    "id": id,
+                                    "kind": kind,
+                                    "name": name,
+                                    "signature": signature,
+                                    "docstring": docstring,
+                                    "source_code": source_code,
+                                }))
+                            } else {
+                                Err(format!("Symbol {} not found", id))
+                            }
                         }
+                    } else {
+                        Err("Invalid URI scheme".to_string())
                     }
                 }).await.map_err(|e| ErrorData {
                     code: ErrorCode(-32000),
