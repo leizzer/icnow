@@ -19,6 +19,14 @@ This document outlines the approved new tools and enhancements for the `icnow` c
 * **Description**: Provide documentation about the graph schema (available node labels, relationship types, and property keys).
 * **Why**: Helps agents construct valid Cypher queries without guessing.
 
+### [ ] 4. Semantic Vector Search (Embeddings)
+* **Description**: Generate vector embeddings for node `source_code` or `docstring` (using the `fastembed` crate) and expose a `semantic_search` MCP tool.
+* **Why**: Allows agents to find methods and classes by semantic meaning (e.g., "Find methods related to processing Stripe payments") rather than relying purely on exact-match symbol searches.
+
+### [ ] 5. Codebase Architecture Onboarding (`get_architecture_overview`)
+* **Description**: Create a tool that runs graph centrality algorithms (like degree counting or PageRank) to find the most highly referenced nodes in the codebase and returns a condensed markdown summary.
+* **Why**: When an agent starts a new task in a massive codebase, reading file structures is slow. This provides immediate orientation by identifying the core models and controllers that most of the application depends on.
+
 ---
 
 ## ⚡ Improvements to Existing Tools

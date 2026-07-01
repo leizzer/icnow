@@ -1,5 +1,6 @@
 use anyhow::Result;
 use icnow::tools::GraphService;
+use icnow::resources::ResourceHandler;
 use rmcp::{ServiceExt, transport::stdio};
 use tracing_subscriber::{self, EnvFilter};
 
@@ -29,7 +30,8 @@ async fn main() -> Result<()> {
     let service = GraphService {
         db_path: db_path.clone(),
     };
-    let service_handle = service.serve(stdio()).await?;
+    let resource_service = ResourceHandler::new(service);
+    let service_handle = resource_service.serve(stdio()).await?;
 
     // Only watch current_dir if it looks like a valid project root (has .git, Cargo.toml, etc.)
     // to avoid watching the user's home directory if Claude Desktop started the server there.

@@ -4,6 +4,7 @@ pub mod lsif;
 pub mod models;
 pub mod parser;
 pub mod reconciler;
+pub mod resources;
 pub mod tools;
 pub mod watcher;
 

@@ -37,7 +37,7 @@ pub struct GraphService {
 }
 
 impl GraphService {
-    fn resolve_db_path_and_watch(
+    pub(crate) fn resolve_db_path_and_watch(
         &self,
         project_root: Option<&str>,
         file_path: Option<&str>,
