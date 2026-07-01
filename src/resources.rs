@@ -186,6 +186,27 @@ impl Service<RoleServer> for ResourceHandler {
                     }),
                 }
             }
+            ClientRequest::InitializeRequest(req) => {
+                let res = Service::handle_request(&self.inner, ClientRequest::InitializeRequest(req), context).await;
+                if let Ok(ServerResult::InitializeResult(mut info)) = res {
+                    if let Ok(mut json_info) = serde_json::to_value(&info) {
+                        if let Some(caps) = json_info.get_mut("capabilities") {
+                            if let Some(caps_obj) = caps.as_object_mut() {
+                                caps_obj.insert("resources".to_string(), json!({
+                                    "listChanged": false,
+                                    "subscribe": false
+                                }));
+                            }
+                        }
+                        if let Ok(new_info) = serde_json::from_value(json_info) {
+                            info = new_info;
+                        }
+                    }
+                    Ok(ServerResult::InitializeResult(info))
+                } else {
+                    res
+                }
+            }
             rest => Service::handle_request(&self.inner, rest, context).await,
         }
     }
