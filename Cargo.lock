@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "icnow"
-version = "0.1.45"
+version = "0.1.48"
 dependencies = [
  "anyhow",
  "fastembed",

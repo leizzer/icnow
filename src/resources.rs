@@ -34,15 +34,25 @@ impl Service<RoleServer> for ResourceHandler {
                     let conn = crate::open_db_connection(&db_path)
                         .map_err(|e| format!("Failed to open DB: {e}"))?;
                     
+                    let project_root = std::path::Path::new(&db_path)
+                        .parent()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    
                     let mut items = Vec::new();
                     
                     let file_query = "MATCH (f:File) RETURN f.id ORDER BY f.id LIMIT 1000";
                     if let Ok(mut res) = conn.query(file_query) {
                         while let Some(row) = res.next() {
                             if let lbug::Value::String(id) = &row[0] {
+                                let relative_id = if id.starts_with(&project_root) {
+                                    id.strip_prefix(&project_root).unwrap_or(id).trim_start_matches('/').to_string()
+                                } else {
+                                    id.clone()
+                                };
                                 items.push(json!({
-                                    "uri": format!("icnow://node/{}", id),
-                                    "name": id.clone(),
+                                    "uri": format!("node://{}", relative_id),
+                                    "name": relative_id,
                                     "mimeType": "text/markdown",
                                     "description": "Source file"
                                 }));
@@ -55,7 +65,7 @@ impl Service<RoleServer> for ResourceHandler {
                         while let Some(row) = res.next() {
                             if let (lbug::Value::String(id), lbug::Value::String(name)) = (&row[0], &row[1]) {
                                 items.push(json!({
-                                    "uri": format!("icnow://memory/{}", id),
+                                    "uri": format!("memory://{}", id),
                                     "name": format!("Memory: {}", name),
                                     "mimeType": "text/markdown",
                                     "description": "Project Memory"
@@ -91,14 +101,14 @@ impl Service<RoleServer> for ResourceHandler {
             }
             ClientRequest::ListResourceTemplatesRequest(_req) => {
                 let node_template: ResourceTemplate = serde_json::from_value(json!({
-                    "uriTemplate": "icnow://node/{node_id}",
-                    "name": "Graph Node",
-                    "description": "Read a specific symbol or file from the codebase graph",
+                    "uriTemplate": "node://{file_path}",
+                    "name": "Project File",
+                    "description": "Read a file from the project graph",
                     "mimeType": "text/markdown"
                 })).unwrap();
 
                 let memory_template: ResourceTemplate = serde_json::from_value(json!({
-                    "uriTemplate": "icnow://memory/{memory_id}",
+                    "uriTemplate": "memory://{memory_id}",
                     "name": "Project Memory",
                     "description": "Read a saved project memory or architectural decision",
                     "mimeType": "text/markdown"
@@ -118,8 +128,8 @@ impl Service<RoleServer> for ResourceHandler {
                 
                 let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
                     let uri = uri_clone;
-                    if uri.starts_with("icnow://memory/") {
-                        let id = uri.trim_start_matches("icnow://memory/").to_string();
+                    if uri.starts_with("memory://") {
+                        let id = uri.trim_start_matches("memory://").to_string();
                         let conn = crate::open_db_connection(&db_path)
                             .map_err(|e| format!("Failed to open DB: {e}"))?;
                             
@@ -143,8 +153,21 @@ impl Service<RoleServer> for ResourceHandler {
                         } else {
                             Err(format!("Memory {} not found", id))
                         }
-                    } else if uri.starts_with("icnow://node/") {
-                        let id = urlencoding::decode(uri.trim_start_matches("icnow://node/")).unwrap_or(Cow::Borrowed("")).to_string();
+                    } else if uri.starts_with("node://") {
+                        let project_root = std::path::Path::new(&db_path)
+                            .parent()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                            
+                        let raw_id = urlencoding::decode(uri.trim_start_matches("node://")).unwrap_or(std::borrow::Cow::Borrowed("")).to_string();
+                        
+                        // Convert relative path back to absolute path using project_root
+                        let id = if std::path::Path::new(&raw_id).is_absolute() {
+                            raw_id
+                        } else {
+                            std::path::Path::new(&project_root).join(&raw_id).to_string_lossy().to_string()
+                        };
+                        
                         let conn = crate::open_db_connection(&db_path)
                             .map_err(|e| format!("Failed to open DB: {e}"))?;
                         
