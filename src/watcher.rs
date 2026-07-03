@@ -12,6 +12,25 @@ static WATCHED_WORKSPACES: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
 pub fn ensure_watching(project_root: &Path, db_path: &str) {
+    // Only watch project_root if it looks like a valid project root (has .git, Cargo.toml, etc.)
+    // to avoid watching the user's home directory if Claude Desktop started the server there.
+    let is_valid_project = project_root.join(".git").exists()
+        || project_root.join("Cargo.toml").exists()
+        || project_root.join("Gemfile").exists()
+        || project_root.join("package.json").exists()
+        || project_root.join("go.mod").exists()
+        || project_root.join("pyproject.toml").exists()
+        || project_root.join("requirements.txt").exists()
+        || project_root.join("Makefile").exists();
+
+    if !is_valid_project {
+        tracing::info!(
+            "Directory {:?} does not appear to be a project root. Skipping automatic watcher.",
+            project_root
+        );
+        return;
+    }
+
     let canonical = match fs::canonicalize(project_root) {
         Ok(p) => p,
         Err(_) => project_root.to_path_buf(),

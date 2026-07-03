@@ -64,7 +64,7 @@ Because `icnow` is a graph database, it doesn't just store code—it stores *kno
 ## Zero-Config AST Parsing
 Tree-sitter natively extracts functions, classes, and imports across Rust, Ruby, TypeScript, and more—with zero external toolchain dependencies.
 
-## Get started (60 seconds)
+## Get started
 
 ```bash
 # 1 — Install
