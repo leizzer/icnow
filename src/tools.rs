@@ -430,7 +430,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
             let actual_lsif_path = match lsif_path_opt {
                 Some(path) => path,
                 None => {
-                    match crate::lsif::auto_generate_lsif(&inferred_root_clone) {
+                    match crate::scanner::auto_generate_lsif(&inferred_root_clone) {
                         Ok(generated) => generated,
                         Err(e) => {
                             ::tracing::error!("Auto-generation of LSIF failed: {}", e);
@@ -442,9 +442,9 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
 
             crate::PAUSE_WATCHER.store(true, std::sync::atomic::Ordering::SeqCst);
             let import_res = if actual_lsif_path == "NATIVE_AST" {
-                crate::lsif::scan_directory_native(&inferred_root_clone, &db_path_clone)
+                crate::scanner::scan_directory_native(&inferred_root_clone, &db_path_clone)
             } else {
-                let res = crate::lsif::parse_and_import_lsif(&actual_lsif_path, &db_path_clone, Some(&inferred_root_clone));
+                let res = crate::scanner::parse_and_import_lsif(&actual_lsif_path, &db_path_clone, Some(&inferred_root_clone));
                 let _ = std::fs::remove_file(&actual_lsif_path);
                 res
             };

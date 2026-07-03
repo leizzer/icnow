@@ -11,19 +11,21 @@ use lbug::{Connection, Value};
 static WATCHED_WORKSPACES: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
-pub fn ensure_watching(project_root: &Path, db_path: &str) {
+fn is_valid_project(project_root: &Path) -> bool {
     // Only watch project_root if it looks like a valid project root (has .git, Cargo.toml, etc.)
     // to avoid watching the user's home directory if Claude Desktop started the server there.
-    let is_valid_project = project_root.join(".git").exists()
+    project_root.join(".git").exists()
         || project_root.join("Cargo.toml").exists()
         || project_root.join("Gemfile").exists()
         || project_root.join("package.json").exists()
         || project_root.join("go.mod").exists()
         || project_root.join("pyproject.toml").exists()
         || project_root.join("requirements.txt").exists()
-        || project_root.join("Makefile").exists();
+        || project_root.join("Makefile").exists()
+}
 
-    if !is_valid_project {
+pub fn ensure_watching(project_root: &Path, db_path: &str) {
+    if !is_valid_project(project_root) {
         tracing::info!(
             "Directory {:?} does not appear to be a project root. Skipping automatic watcher.",
             project_root
@@ -31,22 +33,21 @@ pub fn ensure_watching(project_root: &Path, db_path: &str) {
         return;
     }
 
-    let canonical = match fs::canonicalize(project_root) {
+    let canonical_path = match fs::canonicalize(project_root) {
         Ok(p) => p,
         Err(_) => project_root.to_path_buf(),
     };
 
     {
         let mut watched = WATCHED_WORKSPACES.lock().unwrap();
-        if watched.contains(&canonical) {
+        if !watched.insert(canonical_path.clone()) {
             return;
         }
-        watched.insert(canonical.clone());
     }
 
-    tracing::info!("Registering new workspace to watch: {:?}", canonical);
+    tracing::info!("Registering new workspace to watch: {:?}", canonical_path);
     let db_path_clone = db_path.to_string();
-    let root_clone = canonical.clone();
+    let root_clone = canonical_path.clone();
 
     tokio::task::spawn_blocking(move || {
         run_watcher_lifecycle(root_clone, db_path_clone);
@@ -270,13 +271,16 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
     let marker = std::path::Path::new(&remapped).parent().unwrap().join(".deep_scan_complete");
     if marker.exists() {
         if let Ok(conn) = crate::open_db_connection(&db_path) {
-            let needs_scan = if let Ok(mut res) = conn.query("MATCH (f:File) RETURN f.id LIMIT 1") {
-                res.by_ref().next().is_none()
-            } else { true };
-            
+            let mut needs_scan = true;
+            if let Ok(mut res) = conn.query("MATCH (f:File) RETURN f.id LIMIT 1") {
+                if res.by_ref().next().is_some() {
+                    needs_scan = false;
+                }
+            }
+
             if needs_scan {
                 tracing::info!("Auto-triggering deep scan recovery because .deep_scan_complete exists but DB is empty.");
-                let _ = crate::lsif::scan_directory_native(&root_dir.to_string_lossy(), &db_path);
+                let _ = crate::scanner::scan_directory_native(&root_dir.to_string_lossy(), &db_path);
             }
         }
     }
