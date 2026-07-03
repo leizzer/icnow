@@ -1,7 +1,0 @@
-use icnow::open_db_graph;
-
-#[test]
-fn test_open() {
-    let _conn = open_db_graph("/Users/cristian/projects/dgapp_bkp/knowledge.db").unwrap();
-    println!("Opened successfully");
-}

@@ -1,9 +1,0 @@
-@@ -10,6 +10,8 @@
- pub mod reconciler;
- pub mod tools;
- 
-+pub static PAUSE_WATCHER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-+
- static DB_INSTANCE: OnceLock<Database> = OnceLock::new();
- 
- pub fn get_or_init_db(db_path: &str) -> &'static Database {

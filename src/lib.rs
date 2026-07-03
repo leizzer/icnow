@@ -9,6 +9,7 @@ pub mod tools;
 pub mod watcher;
 
 pub static PAUSE_WATCHER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static IS_INDEXING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 use lbug::{Database, Connection, SystemConfig};
 use std::collections::HashMap;

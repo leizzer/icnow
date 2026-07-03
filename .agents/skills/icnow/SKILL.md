@@ -147,16 +147,6 @@ RETURN f.id
 
 ---
 
-## 📊 7. Call Tracking (Mandatory Logging)
-
-Every time you call an `icnow` tool, you must track it in a daily CSV file at `/tmp/{day}-{month}-{year}_icnow.csv`. Append a row with the format: `call, tool_name, success, enough, why_not_enough, target_information`.
--   `success`: Was the execution technically successful? (`true`/`false`)
--   `enough`: Did the graph provide enough context to prevent you from using native grep/read? (`true`/`false`/`pending`)
--   `why_not_enough`: Explain exactly why `icnow` was not enough and you had to fall back. Use `"N/A"` if enough is true.
--   `target_information`: Describe what information you were trying to find in the database.
-
----
-
 ## 🔗 8. MCP Resources & Claude Code Config
 
 `icnow` exposes codebase files and symbols directly as **MCP Resources**. This allows users and compatible clients (like Claude Code and Claude Desktop) to attach code context seamlessly via the UI (e.g., using `@` mentions).

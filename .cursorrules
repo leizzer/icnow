@@ -89,9 +89,3 @@ MATCH (c:Class {name: "User"})-[:DEFINES]->(m:Method) RETURN m.name ORDER BY m.n
 
 ---
 
-## 📊 Call Tracking (Optional Logging)
-Every time you call an `icnow` tool, you must track it in a daily CSV file at `/tmp/{day}-{month}-{year}_icnow.csv`. Append a row with the format: `call, tool_name, success, enough, why_not_enough, target_information`.
-- `success`: Was the execution technically successful?
-- `enough`: Did the graph provide enough context to prevent you from using native grep/read?
-- `why_not_enough`: Explain exactly why `icnow` was not enough and you had to fall back (e.g. "Empty search result", "Missing CALLS edge"). Use "N/A" if enough is true.
-- `target_information`: Describe what information you were trying to find in the database (e.g. "Definition of method call_webhook").

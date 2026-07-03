@@ -684,8 +684,14 @@ struct ImportState {
 }
 
 pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize, usize)> {
+    crate::IS_INDEXING.store(true, std::sync::atomic::Ordering::SeqCst);
     use walkdir::WalkDir;
-    let conn = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e))?;
+    let conn_res = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e));
+    if let Err(e) = conn_res {
+        crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
+        return Err(e);
+    }
+    let conn = conn_res.unwrap();
     
     let mut files_scanned = 0;
     for entry in WalkDir::new(project_root).into_iter().filter_map(|e| e.ok()) {
@@ -705,6 +711,7 @@ pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize
         }
     }
     
+    crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
     // Now trigger import reconciliation explicitly
     if let Err(e) = crate::reconciler::reconcile_imports(db_path) {
         tracing::error!("Failed to reconcile imports during deep scan: {}", e);
@@ -718,9 +725,15 @@ pub fn parse_and_import_lsif(
     db_path: &str,
     project_root: Option<&str>,
 ) -> Result<(usize, usize)> {
+    crate::IS_INDEXING.store(true, std::sync::atomic::Ordering::SeqCst);
     tracing::info!("Starting LSIF import from {} into {}", lsif_path, db_path);
 
-    let file = File::open(lsif_path)?;
+    let file_res = File::open(lsif_path);
+    if let Err(e) = file_res {
+        crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
+        return Err(e.into());
+    }
+    let file = file_res.unwrap();
     let reader = BufReader::new(file);
 
     let mut ctx = LsifContext::default();
@@ -815,6 +828,7 @@ pub fn parse_and_import_lsif(
         nodes_count,
         edges_count
     );
+    crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
     Ok((nodes_count, edges_count))
 }
 

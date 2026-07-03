@@ -12,6 +12,10 @@ fn get_str_val(row: &[Value], cols: &[String], name: &str) -> Option<String> {
 }
 
 pub fn reconcile_imports(db_path: &str) -> Result<()> {
+    if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {
+        tracing::info!("Skipping import reconciliation because deep scan is currently running.");
+        return Ok(());
+    }
     tracing::info!("Starting background import reconciliation...");
     let conn = crate::open_db_connection(db_path)
         .map_err(|e| anyhow::anyhow!(e))?;
