@@ -1,17 +1,9 @@
 use crate::tools::{
     CoverageCheckRequest, GetFileStructureRequest, GetSymbolImplementationRequest, GetSymbolInfoRequest,
-    ListIndexedFilesRequest, QueryGraphCypherRequest, QueryGraphRequest, SearchSymbolsRequest,
+    ListIndexedFilesRequest, QueryGraphCypherRequest, SearchSymbolsRequest,
 };
 
-pub fn handle_query_graph(
-    _db_path: &str,
-    _req: QueryGraphRequest,
-) -> Result<String, String> {
-    if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err("Database is currently indexing. Please wait a few seconds and try again.".to_string());
-    }
-    Err("SQLite queries are no longer supported. Please use Cypher with QueryGraphCypherRequest.".to_string())
-}
+
 
 pub fn handle_query_graph_cypher(db_path: &str, req: QueryGraphCypherRequest) -> Result<String, String> {
     if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {

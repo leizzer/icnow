@@ -183,19 +183,7 @@ impl GraphService {
         }).await
     }
 
-    #[tool(
-        description = "Executes a raw SQL SELECT query against the underlying SQLite database tables (nodes, edges, node_props_text) to retrieve metadata, properties, counts, or precise source code fragments. **CRITICAL:** NEVER use PRAGMA queries to discover tables! ALWAYS call `get_graph_schema` FIRST to get the schema. This is the PREFERRED tool for lookups and filtering over Cypher due to 12,000x index speedups."
-    )]
-    async fn query_graph(
-        &self,
-        Parameters(req): Parameters<QueryGraphRequest>,
-    ) -> Result<String, String> {
-        let svc = self.clone();
-        blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
-            queries::handle_query_graph(&db_path, req)
-        }).await
-    }
+
 
     #[tool(
         description = "Recursively walks the graph bidirectionally from a starting node up to a specified depth (max_depth) and returns an indented relationship list. Use this tool when you want to discover the neighborhood of dependencies, callers, or subclasses of a particular node in a single call."
@@ -213,7 +201,7 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Executes a graph query using Cypher syntax (e.g., MATCH (source)-[rel]->(target) WHERE ...) to discover patterns, links, or cross-file dependencies. **CRITICAL:** DO NOT use this for property lookups, text filtering, or counts (use `query_graph` SQL instead). ONLY use Cypher for multi-hop structural/relationship traversals."
+        description = "Executes a graph query using Cypher syntax (e.g., MATCH (source)-[rel]->(target) WHERE ...) to discover patterns, links, or cross-file dependencies."
     )]
     async fn query_graph_cypher(
         &self,
@@ -378,7 +366,7 @@ impl GraphService {
         let schema = r#"
 # `icnow` Knowledge Graph (LadybugDB Schema)
 
-This graph uses **LadybugDB** and is queried via **Cypher** using the `query_graph_cypher` tool. **DO NOT** use SQLite or SQL queries.
+This graph uses **LadybugDB** and is queried via **Cypher** using the `query_graph_cypher` tool.
 
 ## Nodes
 - **`File`**: Represents a source file.
@@ -503,7 +491,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     }
 
     #[tool(
-        description = "[EXPERIMENTAL] Searches for concepts and business logic flows using SQLite FTS5 relevance ranking. Returns matching memory nodes and their descriptions."
+        description = "[EXPERIMENTAL] Searches for concepts and business logic flows using vector similarity and Ladybug. Returns matching memory nodes and their descriptions."
     )]
     async fn search_memories(
         &self,
@@ -593,17 +581,7 @@ pub struct ParseFileRequest {
     pub project_root: String,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct QueryGraphRequest {
-    #[schemars(
-        description = "The raw SQL SELECT query to execute against the knowledge.db database (e.g. querying nodes, edges, or node_props_text directly)."
-    )]
-    pub query: String,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
+
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TraverseGraphRequest {
@@ -820,7 +798,7 @@ pub struct GetMemoryRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SearchMemoriesRequest {
     #[schemars(
-        description = "The search query to match against memory names, descriptions, and keywords using SQLite FTS5."
+        description = "The search query to match against memory names, descriptions, and keywords using vector similarity."
     )]
     pub query: String,
     #[schemars(
