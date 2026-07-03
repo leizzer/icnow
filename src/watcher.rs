@@ -7,7 +7,29 @@ use std::sync::mpsc::channel;
 use std::sync::{LazyLock, Mutex};
 use std::time::UNIX_EPOCH;
 use lbug::{Connection, Value};
+use walkdir::WalkDir;
 
+fn is_supported_file(path: &Path) -> bool {
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        matches!(ext, "rs" | "rb" | "ts" | "tsx" | "js" | "jsx")
+    } else {
+        false
+    }
+}
+
+fn is_ignored_dir(path: &Path) -> bool {
+    path.components().any(|comp| {
+        if let Some(s) = comp.as_os_str().to_str() {
+            let s_lower = s.to_lowercase();
+            matches!(
+                s_lower.as_str(),
+                ".git" | ".bundle" | ".yarn" | "target" | "node" | "node_modules" | "vendor" | "tmp" | "log" | "coverage" | "public" | "dist" | "build"
+            ) || s_lower.starts_with('.') // ignore hidden directories/files
+        } else {
+            false
+        }
+    })
+}
 static WATCHED_WORKSPACES: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
@@ -54,28 +76,6 @@ pub fn ensure_watching(project_root: &Path, db_path: &str) {
     });
 }
 
-fn scan_directory(dir: &Path, files: &mut Vec<PathBuf>) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    let name_lower = name.to_lowercase();
-                    if matches!(name_lower.as_str(), ".git" | ".bundle" | ".yarn" | "target" | "node" | "node_modules" | "vendor" | "tmp" | "log" | "coverage" | "public" | "dist" | "build") {
-                        continue;
-                    }
-                }
-                scan_directory(&path, files);
-            } else if path.is_file() {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if ext == "rs" || ext == "rb" || ext == "ts" || ext == "tsx" {
-                        files.push(path);
-                    }
-                }
-            }
-        }
-    }
-}
 
 fn delete_file_nodes(conn: &Connection, file_path: &str) -> Result<()> {
     let path_esc = file_path.replace("'", "''");
@@ -118,7 +118,13 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     }
 
     let mut disk_files = Vec::new();
-    scan_directory(root_dir, &mut disk_files);
+    let walker = WalkDir::new(root_dir).into_iter().filter_entry(|e| !is_ignored_dir(e.path()));
+    for entry in walker.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_file() && is_supported_file(path) {
+            disk_files.push(path.to_path_buf());
+        }
+    }
 
     let mut files_to_reindex = Vec::new();
     let mut current_disk_paths = HashSet::new();
@@ -203,27 +209,7 @@ fn handle_watcher_event(event: Event, conn: &Connection) {
         return;
     }
     for path in event.paths {
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if ext != "rs" && ext != "rb" && ext != "ts" && ext != "tsx" {
-                continue;
-            }
-        } else {
-            continue;
-        }
-
-        if path.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.')) {
-            continue;
-        }
-
-        let has_ignored_dir = path.components().any(|comp| {
-            if let Some(s) = comp.as_os_str().to_str() {
-                let s_lower = s.to_lowercase();
-                matches!(s_lower.as_str(), "target" | "vendor" | "node" | "node_modules" | ".git" | ".bundle" | ".yarn" | "tmp" | "log" | "coverage" | "public" | "dist" | "build")
-            } else {
-                false
-            }
-        });
-        if has_ignored_dir {
+        if !is_supported_file(&path) || is_ignored_dir(&path) {
             continue;
         }
 
@@ -266,6 +252,44 @@ fn is_process_alive(pid: u32) -> bool {
     } else { false }
 }
 
+fn try_acquire_watcher_lock(conn: &Connection, pid: u32) -> std::result::Result<bool, String> {
+    let _ = conn.query("CREATE NODE TABLE IF NOT EXISTS WatcherLock (id INT64, pid INT64, last_heartbeat INT64, PRIMARY KEY(id))");
+
+    let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+
+    let mut current_lock: Option<(u32, i64)> = None;
+    if let Ok(mut res) = conn.query("MATCH (l:WatcherLock {id: 1}) RETURN l.pid, l.last_heartbeat") {
+        let cols = res.get_column_names();
+        if let Some(row) = res.by_ref().next() {
+            if let (Some(l_pid), Some(l_hb)) = (get_val_int(&row, &cols, "l.pid"), get_val_int(&row, &cols, "l.last_heartbeat")) {
+                current_lock = Some((l_pid as u32, l_hb));
+            }
+        }
+    }
+
+    let can_acquire = match current_lock {
+        None => true,
+        Some((lock_pid, heartbeat)) => {
+            if lock_pid == pid { true } else {
+                let is_stale = now - heartbeat >= 15;
+                let is_dead = !is_process_alive(lock_pid);
+                is_stale || is_dead
+            }
+        }
+    };
+
+    if can_acquire {
+        let query = format!("MERGE (l:WatcherLock {{id: 1}}) ON MATCH SET l.pid = {}, l.last_heartbeat = {} ON CREATE SET l.pid = {}, l.last_heartbeat = {}", pid, now, pid, now);
+        match conn.query(&query) {
+            Ok(_) => Ok(true),
+            Err(e) => Err(e.to_string()),
+        }
+    } else {
+        Ok(false)
+    }
+}
+
+
 pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
     let remapped = crate::resolve_centralized_db_path(&db_path);
     let marker = std::path::Path::new(&remapped).parent().unwrap().join(".deep_scan_complete");
@@ -305,36 +329,8 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
             }
         };
 
-        let _ = conn.query("CREATE NODE TABLE IF NOT EXISTS WatcherLock (id INT64, pid INT64, last_heartbeat INT64, PRIMARY KEY(id))");
-
-        let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-
-        let mut current_lock: Option<(u32, i64)> = None;
-        if let Ok(mut res) = conn.query("MATCH (l:WatcherLock {id: 1}) RETURN l.pid, l.last_heartbeat") {
-            let cols = res.get_column_names();
-            if let Some(row) = res.by_ref().next() {
-                if let (Some(l_pid), Some(l_hb)) = (get_val_int(&row, &cols, "l.pid"), get_val_int(&row, &cols, "l.last_heartbeat")) {
-                    current_lock = Some((l_pid as u32, l_hb));
-                }
-            }
-        }
-
-        let can_acquire = match current_lock {
-            None => true,
-            Some((lock_pid, heartbeat)) => {
-                if lock_pid == pid { true } else {
-                    let is_stale = now - heartbeat >= 15;
-                    let is_dead = !is_process_alive(lock_pid);
-                    is_stale || is_dead
-                }
-            }
-        };
-
-        if can_acquire {
-            let query = format!("MERGE (l:WatcherLock {{id: 1}}) ON MATCH SET l.pid = {}, l.last_heartbeat = {} ON CREATE SET l.pid = {}, l.last_heartbeat = {}", pid, now, pid, now);
-            let res = conn.query(&query);
-
-            if res.is_ok() {
+        match try_acquire_watcher_lock(&conn, pid) {
+            Ok(true) => {
                 if !is_active_watcher {
                     tracing::info!("Acquired watcher lock for PID {}. Activating file watcher.", pid);
                     is_active_watcher = true;
@@ -386,15 +382,21 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
                         tracing::info!("Watcher loop thread exiting cleanly.");
                     });
                 }
-            } else if !is_active_watcher {
-                tracing::warn!("Failed to initially acquire watcher lock in DB: {:?}", res.err());
-            } else {
-                tracing::warn!("Failed to update watcher heartbeat in DB (transient lock?): {:?}", res.err());
             }
-        } else if is_active_watcher {
-            tracing::warn!("Lock stolen by another process. Stepping down as active watcher.");
-            is_active_watcher = false;
-            _active_watcher = None; 
+            Ok(false) => {
+                if is_active_watcher {
+                    tracing::warn!("Lock stolen by another process. Stepping down as active watcher.");
+                    is_active_watcher = false;
+                    _active_watcher = None; 
+                }
+            }
+            Err(e) => {
+                if !is_active_watcher {
+                    tracing::warn!("Failed to initially acquire watcher lock in DB: {}", e);
+                } else {
+                    tracing::warn!("Failed to update watcher heartbeat in DB (transient lock?): {}", e);
+                }
+            }
         }
 
         std::thread::sleep(std::time::Duration::from_secs(5));
