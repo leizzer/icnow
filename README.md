@@ -8,15 +8,15 @@
     The code knowledge graph MCP server for AI agents
 </pre></div>
 
-<p align="center"><strong>10–80x faster codebase traversal · Rust · Ladybug · AST parsing · Local-first · Zero-config</strong></p>
+<p align="center"><strong>10–80% less tokens for codebase traversal · Rust · Ladybug · AST parsing · Local-first · Zero-config</strong></p>
 
 <p align="center">
-  <a href="https://crates.io/crates/icnow"><img src="https://img.shields.io/crates/v/icnow.svg" alt="Crates.io"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
 <p align="center">
   <a href="#get-started-60-seconds">Install</a> ·
+  <a href="#core-features">Features</a> ·
   <a href="#proof">Proof</a> ·
   <a href="#agent-compatibility-matrix">Agents</a> ·
   <a href="https://github.com/leizzer/icnow">GitHub</a>
@@ -26,40 +26,43 @@
 
 `icnow` compresses codebase discovery by representing your entire project as an instantly queryable graph database. AI agents stop blindly grepping and start resolving callers, subclasses, and dependencies with 100% precision in a fraction of the time. Same answers, 90% fewer tokens.
 
-## What it does
+## Why use a Semantic Graph?
 
-- **MCP server** — Native Model Context Protocol server exposing `search_symbols`, `get_symbol_info`, `deep_scan`, and `query_graph_cypher`.
-- **AST Parsing** — Tree-sitter natively extracts functions, classes, and imports across Rust, Ruby, TypeScript, and more—with zero external toolchain dependencies.
-- **Graph Database** — Ladybug powers lightning-fast openCypher edge traversals.
-- **Replaces Grep** — Agents query structured edges (`CALLS`, `INHERITS`, `IMPORTS`) instead of hallucinating regexes.
-- **Isolated & Local** — Stores `knowledge.db` entirely locally inside your project root. 
+When AI agents rely on traditional text-search tools (like `grep` or `cat`) to navigate a codebase, they often consume large amounts of their context window reading full files just to understand structure. `icnow` provides a structured, queryable map of your project instead.
 
-## How it works (30 seconds)
+- **Token Efficiency** — Instead of reading a full file to find its methods, agents can query `icnow` to retrieve a lightweight structural outline.
+- **Semantic Navigation** — Agents don't have to rely on regex patterns. They can query explicit semantic relationships like *"Find all nodes that call the `authenticate` function."*
+- **Context Assembly** — Agents can trace multi-hop dependency chains (e.g., *A calls B, which inherits from C*) in a single graph query.
+- **Improved Performance** — By minimizing input tokens, LLM API calls can become more cost-effective and responses return faster, while reducing context-loss issues.
 
-```
- Your agent / IDE
-   (Claude Code, Cursor, Antigravity, Aider…)
-        │   MCP tool calls · cypher queries
-        ▼
-    ┌────────────────────────────────────────────────────┐
-    │  icnow   (runs locally in your project root)       │
-    │  ────────────────────────────────────────────────  │
-    │  DeepScan  →  Tree-sitter AST  →  knowledge.db     │
-    │                    ├─ Node Extraction (Symbols)    │
-    │                    ├─ Edge Resolution (Imports)    │
-    │                    └─ Ladybug Graph Engine         │
-    │                                                    │
-    │  search_symbols · get_symbol_info · query_graph    │
-    └────────────────────────────────────────────────────┘
-        │   structured JSON graph responses
-        ▼
- LLM provider  (Anthropic · OpenAI · Bedrock · …)
-```
+## MCP Capabilities
 
-- **DeepScan** — Parses the codebase asynchronously in 50-item transaction chunks.
-- **Node Extraction** — Automatically identifies `File`, `Function`, `Class`, and `Model` nodes.
-- **Edge Resolution** — Draws the `CALLS`, `INHERITS`, `IMPORTS`, and `CONTAINS` lines connecting the project.
-- **openCypher Engine** — Traverses the graph at millisecond speeds.
+`icnow` provides a complete implementation of the Model Context Protocol (MCP), offering **Tools**, **Resources**, and **Prompts** to AI agents:
+
+### 🛠️ Tools (Active Queries & Actions)
+- **Semantic Code Search** — Use `search_symbols`, `get_symbol_info`, and `get_symbol_implementation` to find and extract exact implementations without dumping entire files into context.
+- **Advanced Call Tracing** — Trace callers and callees seamlessly with `trace_call_path`, `get_dependencies`, and `traverse_graph`. Instantly answer *"What happens if I change this function?"*
+- **Interactive Visual Maps** — Agents can generate stunning HTML visualizations of your codebase architecture using `generate_interactive_map`.
+- **Persistent Agent Memory** — Agents can use `save_memory` and `search_memories` to store permanent project insights directly in the graph!
+- **Native Cypher Querying** — Run arbitrary pattern-matching queries using `query_graph_cypher` powered by the Ladybug graph engine.
+
+### 📄 Resources (Passive Context)
+- **Live Codebase Access** — Entire source files and parsed symbols are exposed directly as MCP Resources. Agents and users (e.g. via Claude Desktop) can attach exact file states or symbol definitions seamlessly.
+- **Graph Schema** — The database schema is exposed as a resource, allowing the LLM to inspect available node types and relationships.
+
+### 💬 Prompts (Templated Workflows)
+- **Pre-built Contexts** — `icnow` provides built-in MCP Prompts that bundle up semantic search results, file outlines, and memory states so the LLM can kick off a task with optimal graph context from message one.
+
+## 🧠 Persistent Agent Memory
+
+Because `icnow` is a graph database, it doesn't just store code—it stores *knowledge*. AI Agents can use the Memory MCP tools to write their own permanent nodes into the graph.
+
+- **Store Architecture Decisions**: Agents can save insights like *"The `User` model handles auth, don't use `Session` directly"* which persists across chats and sessions.
+- **Vector Search**: Memories are automatically vectorized locally (using FastEmbed). When an agent starts a new task, it can run `search_memories(query: "auth")` to instantly recall past context.
+- **Graph Linkage**: Because memories live in the same graph as your code, agents can create direct semantic edges between their text memories and actual code nodes.
+
+## Zero-Config AST Parsing
+Tree-sitter natively extracts functions, classes, and imports across Rust, Ruby, TypeScript, and more—with zero external toolchain dependencies.
 
 ## Get started (60 seconds)
 
@@ -157,9 +160,9 @@ RETURN dep.id
 <summary><b>Data Schema</b></summary>
 
 ### Nodes
-Nodes represent files, functions, classes, models, or imports.
+Nodes represent files, functions, classes, models, memories, or imports.
 - **`id`**: Must be a globally unique string (e.g., `src/core/models.rs::Node` or `src/domain/user.ts::User`).
-- **`label`**: The domain-level type (e.g., `Function`, `Struct`, `File`, `Model`).
+- **`label`**: The domain-level type (e.g., `Function`, `Struct`, `File`, `Model`, `Memory`).
 - **`kind`**: The specific AST syntax item (e.g., `function_item`, `class_declaration`).
 
 ### Edges
