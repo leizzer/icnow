@@ -5,6 +5,7 @@ pub mod models;
 pub mod parser;
 pub mod reconciler;
 pub mod resources;
+pub mod prompts;
 pub mod tools;
 pub mod watcher;
 pub mod database;
