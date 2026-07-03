@@ -14,22 +14,25 @@ fn init_tracing() {
     tracing::info!("Starting icnow Graph MCP server...");
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    init_tracing();
-
-    let current_dir = std::env::current_dir()?;
-
+fn resolve_db_path(current_dir: &std::path::Path) -> String {
     // Parse db_path from command-line args if provided, otherwise default to Cwd/knowledge.db
     let args: Vec<String> = std::env::args().collect();
-    let db_path = if args.len() > 1 {
+    if args.len() > 1 {
         args[1].clone()
     } else {
         current_dir
             .join("knowledge.db")
             .to_string_lossy()
             .to_string()
-    };
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    init_tracing();
+
+    let current_dir = std::env::current_dir()?;
+    let db_path = resolve_db_path(&current_dir);
 
     let service = GraphService {
         db_path: db_path.clone(),
