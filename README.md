@@ -128,49 +128,6 @@ Reproduced across a 3-task, multi-trial benchmark orchestrated natively on a lar
 - Only work on single-file scripts.
 - Work in a language entirely unsupported by Tree-sitter (though adding support requires just 1 `.scm` file).
 
-<details>
-<summary><b>Cypher Querying Guide</b></summary>
-
-We use **openCypher** via Ladybug as the primary graph query language for retrieving relationships, code patterns, and semantic dependencies.
-
-**List Classes and Their Methods:**
-```cypher
-MATCH (c:Class)-[:CONTAINS]->(m:Method)
-RETURN c.id, m.id
-LIMIT 10
-```
-
-**Find Callers of a Function:**
-```cypher
-MATCH (caller)-[r:CALLS]->(callee)
-WHERE callee.id = 'src/domain/entities/user.ts::User#verify_token'
-RETURN caller.id, label(r)
-```
-
-**Find Dependencies of a File:**
-```cypher
-MATCH (file:File)-[r:IMPORTS]->(dep)
-WHERE file.id = 'src/main.rs'
-RETURN dep.id
-```
-</details>
-
-<details>
-<summary><b>Data Schema</b></summary>
-
-### Nodes
-Nodes represent files, functions, classes, models, memories, or imports.
-- **`id`**: Must be a globally unique string (e.g., `src/core/models.rs::Node` or `src/domain/user.ts::User`).
-- **`label`**: The domain-level type (e.g., `Function`, `Struct`, `File`, `Model`, `Memory`).
-- **`kind`**: The specific AST syntax item (e.g., `function_item`, `class_declaration`).
-
-### Edges
-Edges represent the relationships between two nodes.
-- **`source` / `target`**: Exact String `id`s of the connected Nodes.
-- **`label`**: The relationship type (e.g., `CALLS`, `IMPORTS`, `REFERENCES`, `BELONGS_TO`, `CONTAINS`, `INHERITS`).
-
-</details>
-
 ## Community & License
 
 Apache 2.0 / MIT — see [LICENSE](LICENSE).
