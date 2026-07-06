@@ -71,7 +71,7 @@ Because `icnow` is a graph database, it doesn't just store code—it stores *kno
 - **Graph Linkage**: Because memories live in the same graph as your code, agents can create direct semantic edges between their text memories and actual code nodes.
 
 ## Zero-Config AST Parsing
-Tree-sitter natively extracts functions, classes, and imports across your codebase with zero external toolchain dependencies. 
+`icnow` natively extracts functions, classes, and imports across your codebase with zero external toolchain dependencies. 
 
 **Currently Supported Languages:**
 - Python
@@ -163,7 +163,7 @@ Reproduced across a 3-task, multi-trial benchmark orchestrated natively on a lar
 
 **Skip it if you…**
 - Only work on single-file scripts.
-- Work in a language entirely unsupported by Tree-sitter (though adding support requires just 1 `.scm` file).
+- Work in a language entirely unsupported by `icnow` (though adding support requires just 1 `.scm` file).
 
 ## Community & License
 
