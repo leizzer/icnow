@@ -1,14 +1,13 @@
 use rmcp::{
     Service,
     model::{
-        ClientNotification, ClientRequest, ErrorCode, ErrorData, ListResourcesResult, ReadResourceResult,
-        ResourceContents, ServerInfo, ServerResult, ResourceTemplate, Resource,
+        ClientNotification, ClientRequest, ErrorCode, ErrorData, ListResourcesResult,
+        ReadResourceResult, Resource, ResourceContents, ResourceTemplate, ServerInfo, ServerResult,
     },
-    service::{NotificationContext, RequestContext, RoleServer, DynService},
+    service::{NotificationContext, RequestContext, RoleServer},
 };
 
 use crate::tools::GraphService;
-use std::borrow::Cow;
 use serde_json::json;
 
 pub struct ResourceHandler {
@@ -30,68 +29,79 @@ impl Service<RoleServer> for ResourceHandler {
         match request {
             ClientRequest::ListResourcesRequest(_req) => {
                 let db_path = self.inner.resolve_db_path_and_watch(None, None, None);
-                let result = tokio::task::spawn_blocking(move || -> Result<Vec<serde_json::Value>, String> {
-                    let conn = crate::open_db_connection(&db_path)
-                        .map_err(|e| format!("Failed to open DB: {e}"))?;
-                    
-                    let project_root = std::path::Path::new(&db_path)
-                        .parent()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    
-                    let mut items = Vec::new();
-                    
-                    let file_query = "MATCH (f:File) RETURN f.id ORDER BY f.id LIMIT 1000";
-                    if let Ok(mut res) = conn.query(file_query) {
-                        while let Some(row) = res.next() {
-                            if let lbug::Value::String(id) = &row[0] {
-                                let relative_id = if id.starts_with(&project_root) {
-                                    id.strip_prefix(&project_root).unwrap_or(id).trim_start_matches('/').to_string()
-                                } else {
-                                    id.clone()
-                                };
-                                items.push(json!({
-                                    "uri": format!("node://{}", relative_id),
-                                    "name": relative_id,
-                                    "mimeType": "text/markdown",
-                                    "description": "Source file"
-                                }));
-                            }
-                        }
-                    }
+                let result = tokio::task::spawn_blocking(
+                    move || -> Result<Vec<serde_json::Value>, String> {
+                        let conn = crate::open_db_connection(&db_path)
+                            .map_err(|e| format!("Failed to open DB: {e}"))?;
 
-                    let mem_query = "MATCH (m:Memory) RETURN m.id, m.name ORDER BY m.id LIMIT 1000";
-                    if let Ok(mut res) = conn.query(mem_query) {
-                        while let Some(row) = res.next() {
-                            if let (lbug::Value::String(id), lbug::Value::String(name)) = (&row[0], &row[1]) {
-                                items.push(json!({
-                                    "uri": format!("memory://{}", id),
-                                    "name": format!("Memory: {}", name),
-                                    "mimeType": "text/markdown",
-                                    "description": "Project Memory"
-                                }));
+                        let project_root = std::path::Path::new(&db_path)
+                            .parent()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_default();
+
+                        let mut items = Vec::new();
+
+                        let file_query = "MATCH (f:File) RETURN f.id ORDER BY f.id LIMIT 1000";
+                        if let Ok(mut res) = conn.query(file_query) {
+                            for row in res.by_ref() {
+                                if let lbug::Value::String(id) = &row[0] {
+                                    let relative_id = if id.starts_with(&project_root) {
+                                        id.strip_prefix(&project_root)
+                                            .unwrap_or(id)
+                                            .trim_start_matches('/')
+                                            .to_string()
+                                    } else {
+                                        id.clone()
+                                    };
+                                    items.push(json!({
+                                        "uri": format!("node://{}", relative_id),
+                                        "name": relative_id,
+                                        "mimeType": "text/markdown",
+                                        "description": "Source file"
+                                    }));
+                                }
                             }
                         }
-                    }
-                    
-                    Ok(items)
-                }).await.map_err(|e| ErrorData {
+
+                        let mem_query =
+                            "MATCH (m:Memory) RETURN m.id, m.name ORDER BY m.id LIMIT 1000";
+                        if let Ok(mut res) = conn.query(mem_query) {
+                            for row in res.by_ref() {
+                                if let (lbug::Value::String(id), lbug::Value::String(name)) =
+                                    (&row[0], &row[1])
+                                {
+                                    items.push(json!({
+                                        "uri": format!("memory://{}", id),
+                                        "name": format!("Memory: {}", name),
+                                        "mimeType": "text/markdown",
+                                        "description": "Project Memory"
+                                    }));
+                                }
+                            }
+                        }
+
+                        Ok(items)
+                    },
+                )
+                .await
+                .map_err(|e| ErrorData {
                     code: ErrorCode(-32000),
-                    message: format!("Task error: {}", e).into(),
+                    message: format!("Task error: {e}").into(),
                     data: None,
                 })?;
 
                 match result {
                     Ok(files) => {
-                        let resources = files.into_iter().filter_map(|val| {
-                            serde_json::from_value::<Resource>(val).ok()
-                        }).collect();
+                        let resources = files
+                            .into_iter()
+                            .filter_map(|val| serde_json::from_value::<Resource>(val).ok())
+                            .collect();
                         Ok(ServerResult::ListResourcesResult(ListResourcesResult {
                             resources,
                             meta: None,
                             next_cursor: None,
                         }))
-                    },
+                    }
                     Err(e) => Err(ErrorData {
                         code: ErrorCode(-32000),
                         message: e.into(),
@@ -105,18 +115,21 @@ impl Service<RoleServer> for ResourceHandler {
                     "name": "Project File",
                     "description": "Read a file from the project graph",
                     "mimeType": "text/markdown"
-                })).unwrap();
+                }))
+                .unwrap();
 
                 let memory_template: ResourceTemplate = serde_json::from_value(json!({
                     "uriTemplate": "memory://{memory_id}",
                     "name": "Project Memory",
                     "description": "Read a saved project memory or architectural decision",
                     "mimeType": "text/markdown"
-                })).unwrap();
+                }))
+                .unwrap();
 
                 let result = serde_json::from_value(json!({
                     "resourceTemplates": [node_template, memory_template]
-                })).unwrap();
+                }))
+                .unwrap();
 
                 Ok(ServerResult::ListResourceTemplatesResult(result))
             }
@@ -127,23 +140,23 @@ impl Service<RoleServer> for ResourceHandler {
                 let as_json = uri.ends_with(".json");
                 let db_path = self.inner.resolve_db_path_and_watch(None, None, None);
                 let uri_clone = uri.clone();
-                
+
                 let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
                     let uri = uri_clone;
                     if uri.starts_with("memory://") {
                         let id = uri.trim_start_matches("memory://").to_string();
                         let conn = crate::open_db_connection(&db_path)
                             .map_err(|e| format!("Failed to open DB: {e}"))?;
-                            
+
                         let escaped_id = id.replace("'", "''");
-                        let query = format!("MATCH (m:Memory {{id: '{}'}}) RETURN m.name, m.description, m.keywords", escaped_id);
+                        let query = format!("MATCH (m:Memory {{id: '{escaped_id}'}}) RETURN m.name, m.description, m.keywords");
                         let mut res = conn.query(&query).map_err(|e| e.to_string())?;
-                        
+
                         if let Some(row) = res.next() {
                             let name = match &row[0] { lbug::Value::String(s) => s.clone(), _ => id.clone() };
                             let description = match &row[1] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
                             let keywords = match &row[2] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
-                            
+
                             Ok(json!({
                                 "id": id,
                                 "kind": "Memory",
@@ -153,41 +166,41 @@ impl Service<RoleServer> for ResourceHandler {
                                 "source_code": ""
                             }))
                         } else {
-                            Err(format!("Memory {} not found", id))
+                            Err(format!("Memory {id} not found"))
                         }
                     } else if uri.starts_with("node://") {
                         let project_root = std::path::Path::new(&db_path)
                             .parent()
                             .map(|p| p.to_string_lossy().to_string())
                             .unwrap_or_default();
-                            
+
                         let raw_id = urlencoding::decode(uri.trim_start_matches("node://")).unwrap_or(std::borrow::Cow::Borrowed("")).to_string();
-                        
+
                         // Convert relative path back to absolute path using project_root
                         let id = if std::path::Path::new(&raw_id).is_absolute() {
                             raw_id
                         } else {
                             std::path::Path::new(&project_root).join(&raw_id).to_string_lossy().to_string()
                         };
-                        
+
                         let conn = crate::open_db_connection(&db_path)
                             .map_err(|e| format!("Failed to open DB: {e}"))?;
-                        
+
                         let escaped_id = id.replace("'", "''");
-                        let query_label = format!("MATCH (n {{id: '{}'}}) RETURN label(n)", escaped_id);
+                        let query_label = format!("MATCH (n {{id: '{escaped_id}'}}) RETURN label(n)");
                         let mut res_label = conn.query(&query_label).map_err(|e| e.to_string())?;
                         let label = if let Some(row) = res_label.next() {
                             match &row[0] {
                                 lbug::Value::String(s) => s.clone(),
-                                _ => return Err(format!("Node {} has invalid label", id)),
+                                _ => return Err(format!("Node {id} has invalid label")),
                             }
                         } else {
-                            return Err(format!("Node {} not found in graph", id));
+                            return Err(format!("Node {id} not found in graph"));
                         };
 
                         if label == "File" {
                             let source_code = std::fs::read_to_string(&id)
-                                .unwrap_or_else(|_| format!("Could not read file from disk: {}", id));
+                                .unwrap_or_else(|_| format!("Could not read file from disk: {id}"));
                             Ok(json!({
                                 "id": id,
                                 "kind": "File",
@@ -197,17 +210,17 @@ impl Service<RoleServer> for ResourceHandler {
                                 "source_code": source_code,
                             }))
                         } else {
-                            let query = format!("MATCH (n:Symbol {{id: '{}'}}) RETURN n.kind, n.name, n.signature, n.docstring, n.source_code", escaped_id);
-                            
+                            let query = format!("MATCH (n:Symbol {{id: '{escaped_id}'}}) RETURN n.kind, n.name, n.signature, n.docstring, n.source_code");
+
                             let mut res = conn.query(&query).map_err(|e| e.to_string())?;
-                            
+
                             if let Some(row) = res.next() {
                                 let kind = match &row[0] { lbug::Value::String(s) => s.clone(), _ => "Node".to_string() };
                                 let name = match &row[1] { lbug::Value::String(s) => s.clone(), _ => id.clone() };
                                 let signature = match &row[2] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
                                 let docstring = match &row[3] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
                                 let source_code = match &row[4] { lbug::Value::String(s) => s.clone(), _ => "".to_string() };
-                                
+
                                 Ok(json!({
                                     "id": id,
                                     "kind": kind,
@@ -217,7 +230,7 @@ impl Service<RoleServer> for ResourceHandler {
                                     "source_code": source_code,
                                 }))
                             } else {
-                                Err(format!("Symbol {} not found", id))
+                                Err(format!("Symbol {id} not found"))
                             }
                         }
                     } else {
@@ -225,7 +238,7 @@ impl Service<RoleServer> for ResourceHandler {
                     }
                 }).await.map_err(|e| ErrorData {
                     code: ErrorCode(-32000),
-                    message: format!("Task error: {}", e).into(),
+                    message: format!("Task error: {e}").into(),
                     data: None,
                 })?;
 
@@ -234,39 +247,56 @@ impl Service<RoleServer> for ResourceHandler {
                         let text = if as_json {
                             parsed.to_string()
                         } else {
-                            let kind = parsed.get("kind").and_then(|v| v.as_str()).unwrap_or("Node");
+                            let kind = parsed
+                                .get("kind")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Node");
                             let name = parsed.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                            let docstring = parsed.get("docstring").and_then(|v| v.as_str()).unwrap_or("");
-                            let signature = parsed.get("signature").and_then(|v| v.as_str()).unwrap_or("");
-                            let source = parsed.get("source_code").and_then(|v| v.as_str()).unwrap_or("");
-                            
-                            let mut md = format!("# {} `{}`\n\n", kind, name);
+                            let docstring = parsed
+                                .get("docstring")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let signature = parsed
+                                .get("signature")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let source = parsed
+                                .get("source_code")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+
+                            let mut md = format!("# {kind} `{name}`\n\n");
                             if !signature.is_empty() {
-                                md.push_str(&format!("**Signature**:\n```\n{}\n```\n\n", signature));
+                                md.push_str(&format!("**Signature**:\n```\n{signature}\n```\n\n"));
                             }
                             if !docstring.is_empty() {
-                                md.push_str(&format!("**Documentation**:\n{}\n\n", docstring));
+                                md.push_str(&format!("**Documentation**:\n{docstring}\n\n"));
                             }
                             if !source.is_empty() {
-                                md.push_str(&format!("**Source Code**:\n```\n{}\n```\n", source));
+                                md.push_str(&format!("**Source Code**:\n```\n{source}\n```\n"));
                             }
                             md
                         };
-                        
-                        let mime_type = if as_json { "application/json" } else { "text/markdown" };
-                        
+
+                        let mime_type = if as_json {
+                            "application/json"
+                        } else {
+                            "text/markdown"
+                        };
+
                         let resource_contents = json!({
                             "uri": uri,
                             "mimeType": mime_type,
                             "text": text
                         });
-                        
-                        let contents = serde_json::from_value(resource_contents).unwrap_or_else(|_| {
-                            ResourceContents::text(text, uri)
-                        });
 
-                        Ok(ServerResult::ReadResourceResult(ReadResourceResult::new(vec![contents])))
-                    },
+                        let contents = serde_json::from_value(resource_contents)
+                            .unwrap_or_else(|_| ResourceContents::text(text, uri));
+
+                        Ok(ServerResult::ReadResourceResult(ReadResourceResult::new(
+                            vec![contents],
+                        )))
+                    }
                     Err(e) => Err(ErrorData {
                         code: ErrorCode(-32000),
                         message: e.into(),
@@ -275,18 +305,29 @@ impl Service<RoleServer> for ResourceHandler {
                 }
             }
             ClientRequest::InitializeRequest(req) => {
-                let res = Service::handle_request(&self.inner, ClientRequest::InitializeRequest(req), context).await;
+                let res = Service::handle_request(
+                    &self.inner,
+                    ClientRequest::InitializeRequest(req),
+                    context,
+                )
+                .await;
                 if let Ok(ServerResult::InitializeResult(mut info)) = res {
                     if let Ok(mut json_info) = serde_json::to_value(&info) {
                         if let Some(caps) = json_info.get_mut("capabilities") {
                             if let Some(caps_obj) = caps.as_object_mut() {
-                                caps_obj.insert("resources".to_string(), json!({
-                                    "listChanged": false,
-                                    "subscribe": false
-                                }));
-                                caps_obj.insert("prompts".to_string(), json!({
-                                    "listChanged": false
-                                }));
+                                caps_obj.insert(
+                                    "resources".to_string(),
+                                    json!({
+                                        "listChanged": false,
+                                        "subscribe": false
+                                    }),
+                                );
+                                caps_obj.insert(
+                                    "prompts".to_string(),
+                                    json!({
+                                        "listChanged": false
+                                    }),
+                                );
                             }
                         }
                         if let Ok(new_info) = serde_json::from_value(json_info) {
@@ -307,13 +348,19 @@ impl Service<RoleServer> for ResourceHandler {
         if let Ok(mut json_info) = serde_json::to_value(&info) {
             if let Some(caps) = json_info.get_mut("capabilities") {
                 if let Some(caps_obj) = caps.as_object_mut() {
-                    caps_obj.insert("resources".to_string(), json!({
-                        "listChanged": false,
-                        "subscribe": false
-                    }));
-                    caps_obj.insert("prompts".to_string(), json!({
-                        "listChanged": false
-                    }));
+                    caps_obj.insert(
+                        "resources".to_string(),
+                        json!({
+                            "listChanged": false,
+                            "subscribe": false
+                        }),
+                    );
+                    caps_obj.insert(
+                        "prompts".to_string(),
+                        json!({
+                            "listChanged": false
+                        }),
+                    );
                 }
             }
             if let Ok(new_info) = serde_json::from_value(json_info) {

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use icnow::tools::GraphService;
 use icnow::resources::ResourceHandler;
+use icnow::tools::GraphService;
 use rmcp::{ServiceExt, transport::stdio};
 use tracing_subscriber::{self, EnvFilter};
 
@@ -33,13 +33,19 @@ async fn main() -> Result<()> {
     if args.len() >= 3 && args[1] == "install-skill" {
         let target = &args[2];
         if let Err(e) = icnow::installer::run_installer(target) {
-            eprintln!("Installation failed: {:?}", e);
+            eprintln!("Installation failed: {e:?}");
             std::process::exit(1);
         }
         return Ok(());
     } else if args.len() >= 2 && args[1] == "install-skill" {
         eprintln!("Usage: icnow install-skill <antigravity|claude|cursor|openai>");
         std::process::exit(1);
+    } else if args.len() >= 2 && args[1] == "uninstall" {
+        if let Err(e) = icnow::installer::run_uninstall() {
+            eprintln!("Uninstall failed: {e:?}");
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     init_tracing();

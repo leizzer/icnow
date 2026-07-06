@@ -8,18 +8,28 @@ pub fn generate_html(db_path: &str, out_path: &str, filter_path: &str) -> Result
     let mut elements = Vec::new();
     let mut included_nodes = std::collections::HashSet::new();
 
-    let node_query = "MATCH (n) RETURN n.id AS id, label(n) as label, n.name AS name, n.kind AS kind";
+    let node_query =
+        "MATCH (n) RETURN n.id AS id, label(n) as label, n.name AS name, n.kind AS kind";
     let mut nodes_res = conn.query(node_query).map_err(|e| anyhow::anyhow!(e))?;
     let cols = nodes_res.get_column_names();
 
     for row in nodes_res.by_ref() {
         let get_val = |name: &str| -> String {
-            cols.iter().position(|c| c == name).and_then(|idx| {
-                if let lbug::Value::String(s) = &row[idx] { Some(s.clone()) } else { None }
-            }).unwrap_or_default()
+            cols.iter()
+                .position(|c| c == name)
+                .and_then(|idx| {
+                    if let lbug::Value::String(s) = &row[idx] {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default()
         };
         let id = get_val("id");
-        if id.is_empty() { continue; }
+        if id.is_empty() {
+            continue;
+        }
 
         let label = get_val("label");
         let name = get_val("name");
@@ -37,12 +47,16 @@ pub fn generate_html(db_path: &str, out_path: &str, filter_path: &str) -> Result
             "Module" | "Namespace" => "#66d9ef",
             "Field" | "Property" => "#fd971f",
             _ => {
-                if label == "File" { "#ae81ff" } else { "#ffffff" }
+                if label == "File" {
+                    "#ae81ff"
+                } else {
+                    "#ffffff"
+                }
             }
         };
 
         let node_label = if name.is_empty() {
-            id.split('/').last().unwrap_or(&id).to_string()
+            id.split('/').next_back().unwrap_or(&id).to_string()
         } else {
             name.clone()
         };
@@ -58,9 +72,17 @@ pub fn generate_html(db_path: &str, out_path: &str, filter_path: &str) -> Result
 
     for row in edges_res.by_ref() {
         let get_val = |name: &str| -> String {
-            e_cols.iter().position(|c| c == name).and_then(|idx| {
-                if let lbug::Value::String(s) = &row[idx] { Some(s.clone()) } else { None }
-            }).unwrap_or_default()
+            e_cols
+                .iter()
+                .position(|c| c == name)
+                .and_then(|idx| {
+                    if let lbug::Value::String(s) = &row[idx] {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default()
         };
         let source = get_val("s_id");
         let target = get_val("t_id");

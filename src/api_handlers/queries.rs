@@ -1,61 +1,95 @@
 use crate::tools::{
-    CoverageCheckRequest, GetFileStructureRequest, GetSymbolImplementationRequest, GetSymbolInfoRequest,
-    ListIndexedFilesRequest, QueryGraphCypherRequest, SearchSymbolsRequest,
+    CoverageCheckRequest, GetFileStructureRequest, GetSymbolImplementationRequest,
+    GetSymbolInfoRequest, ListIndexedFilesRequest, QueryGraphCypherRequest, SearchSymbolsRequest,
 };
 
-
-
-pub fn handle_query_graph_cypher(db_path: &str, req: QueryGraphCypherRequest) -> Result<String, String> {
+pub fn handle_query_graph_cypher(
+    db_path: &str,
+    req: QueryGraphCypherRequest,
+) -> Result<String, String> {
     if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err("Database is currently indexing. Please wait a few seconds and try again.".to_string());
+        return Err(
+            "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
+        );
     }
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    let mut res = conn.query(&req.query).map_err(|e| format!("Cypher query failed: {e}"))?;
+    let mut res = conn
+        .query(&req.query)
+        .map_err(|e| format!("Cypher query failed: {e}"))?;
     crate::tools::format_cypher_result(&mut res)
 }
 
 pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result<String, String> {
     if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err("Database is currently indexing. Please wait a few seconds and try again.".to_string());
+        return Err(
+            "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
+        );
     }
     let limit = req.limit.unwrap_or(50);
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    
+
     let query_param = req.query.replace("'", "''");
-    
-    let mut q = format!("MATCH (n:Symbol) WHERE n.kind <> 'unresolved_symbol' AND (n.name CONTAINS '{query_param}' OR (n.id CONTAINS '{query_param}' AND ('{query_param}' CONTAINS '/' OR '{query_param}' CONTAINS '::')))");
-    
+
+    let mut q = format!(
+        "MATCH (n:Symbol) WHERE n.kind <> 'unresolved_symbol' AND (n.name CONTAINS '{query_param}' OR (n.id CONTAINS '{query_param}' AND ('{query_param}' CONTAINS '/' OR '{query_param}' CONTAINS '::')))"
+    );
+
     if let Some(filters) = &req.kind_filter {
         if !filters.is_empty() {
-            let filter_placeholders: Vec<String> = filters.iter().map(|f| format!("'{}'", f.replace("'", "''"))).collect();
-            q.push_str(&format!(" AND (n.kind IN [{f}] OR label(n) IN [{f}])", f=filter_placeholders.join(", ")));
+            let filter_placeholders: Vec<String> = filters
+                .iter()
+                .map(|f| format!("'{}'", f.replace("'", "''")))
+                .collect();
+            q.push_str(&format!(
+                " AND (n.kind IN [{f}] OR label(n) IN [{f}])",
+                f = filter_placeholders.join(", ")
+            ));
         }
     }
-    
-    q.push_str(&format!(" RETURN n.id AS id, n.kind AS label, n.signature AS signature, n.docstring AS docstring LIMIT {}", limit));
-    
-    let mut res = conn.query(&q).map_err(|e| format!("Failed to search symbols: {e}"))?;
+
+    q.push_str(&format!(" RETURN n.id AS id, n.kind AS label, n.signature AS signature, n.docstring AS docstring LIMIT {limit}"));
+
+    let mut res = conn
+        .query(&q)
+        .map_err(|e| format!("Failed to search symbols: {e}"))?;
     let result_str = crate::tools::format_cypher_result(&mut res)?;
-    
+
     if result_str.trim() == "| id | label | signature | docstring |\n| --- | --- | --- | --- |" {
-        return Ok(format!("{}\n\nNo matches found. Hint: The target files might not be indexed yet or might be stale. Use the 'coverage_check' tool to verify if the relevant directories are in the graph.", result_str));
+        return Ok(format!(
+            "{result_str}\n\nNo matches found. Hint: The target files might not be indexed yet or might be stale. Use the 'coverage_check' tool to verify if the relevant directories are in the graph."
+        ));
     }
     Ok(result_str)
 }
 
-pub fn handle_get_file_structure(db_path: &str, req: GetFileStructureRequest) -> Result<String, String> {
+pub fn handle_get_file_structure(
+    db_path: &str,
+    req: GetFileStructureRequest,
+) -> Result<String, String> {
     if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err("Database is currently indexing. Please wait a few seconds and try again.".to_string());
+        return Err(
+            "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
+        );
     }
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    let q = format!("MATCH (f:File {{id: '{}'}})-[:CONTAINS]->(s:Symbol) RETURN s.id AS id, s.kind AS label, s.signature AS signature", req.file_path.replace("'", "''"));
-    let mut res = conn.query(&q).map_err(|e| format!("Failed to query file structure: {e}"))?;
+    let q = format!(
+        "MATCH (f:File {{id: '{}'}})-[:CONTAINS]->(s:Symbol) RETURN s.id AS id, s.kind AS label, s.signature AS signature",
+        req.file_path.replace("'", "''")
+    );
+    let res = conn
+        .query(&q)
+        .map_err(|e| format!("Failed to query file structure: {e}"))?;
     let mut out = String::new();
-    while let Some(row) = res.next() {
+    for row in res {
         let id = row[0].to_string();
         let kind = row[1].to_string();
         let sig = row[2].to_string();
-        out.push_str(&format!("- [{}] {} `{}`\n", kind, id, sig.replace("\n", " ")));
+        out.push_str(&format!(
+            "- [{}] {} `{}`\n",
+            kind,
+            id,
+            sig.replace("\n", " ")
+        ));
     }
     if out.is_empty() {
         return Ok("No symbols found in this file.".to_string());
@@ -63,23 +97,40 @@ pub fn handle_get_file_structure(db_path: &str, req: GetFileStructureRequest) ->
     Ok(out)
 }
 
-pub fn handle_list_indexed_files(db_path: &str, _req: ListIndexedFilesRequest) -> Result<String, String> {
+pub fn handle_list_indexed_files(
+    db_path: &str,
+    _req: ListIndexedFilesRequest,
+) -> Result<String, String> {
     if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err("Database is currently indexing. Please wait a few seconds and try again.".to_string());
+        return Err(
+            "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
+        );
     }
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    let mut res = conn.query("MATCH (f:File) RETURN f.id AS id ORDER BY f.id").map_err(|e| format!("Failed to list files: {e}"))?;
+    let mut res = conn
+        .query("MATCH (f:File) RETURN f.id AS id ORDER BY f.id")
+        .map_err(|e| format!("Failed to list files: {e}"))?;
     crate::tools::format_cypher_result(&mut res)
 }
 
-pub fn handle_get_symbol_implementation(db_path: &str, req: GetSymbolImplementationRequest) -> Result<String, String> {
+pub fn handle_get_symbol_implementation(
+    db_path: &str,
+    req: GetSymbolImplementationRequest,
+) -> Result<String, String> {
     if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err("Database is currently indexing. Please wait a few seconds and try again.".to_string());
+        return Err(
+            "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
+        );
     }
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    let q = format!("MATCH (s:Symbol {{id: '{}'}}) RETURN s.file, s.start_line, s.end_line", req.node_id.replace("'", "''"));
-    let mut res = conn.query(&q).map_err(|e| format!("Failed to get impl: {e}"))?;
-    
+    let q = format!(
+        "MATCH (s:Symbol {{id: '{}'}}) RETURN s.file, s.start_line, s.end_line",
+        req.node_id.replace("'", "''")
+    );
+    let mut res = conn
+        .query(&q)
+        .map_err(|e| format!("Failed to get impl: {e}"))?;
+
     if let Some(row) = res.by_ref().next() {
         let file_path = match &row[0] {
             lbug::Value::String(s) => s.clone(),
@@ -95,60 +146,74 @@ pub fn handle_get_symbol_implementation(db_path: &str, req: GetSymbolImplementat
             lbug::Value::Int32(i) => *i as usize,
             _ => 0, // Fallback if old schema
         };
-        
+
         if start_line == 0 || end_line == 0 {
-            return Err("No line pointers found. Database might be using the old schema.".to_string());
+            return Err(
+                "No line pointers found. Database might be using the old schema.".to_string(),
+            );
         }
-        
-        let file_contents = std::fs::read_to_string(&file_path).map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+
+        let file_contents = std::fs::read_to_string(&file_path)
+            .map_err(|e| format!("Failed to read file {file_path}: {e}"))?;
         let lines: Vec<&str> = file_contents.lines().collect();
-        
+
         let pad_start = start_line.saturating_sub(2).max(1);
         let pad_end = (end_line + 2).min(lines.len());
-        
+
         if pad_start > lines.len() {
             return Err("Start line out of bounds".to_string());
         }
-        
+
         let snippet = lines[pad_start - 1..pad_end].join("\n");
         return Ok(snippet);
     }
-    
+
     Err(format!("No implementation found for {}", req.node_id))
 }
 
 pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Result<String, String> {
     if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err("Database is currently indexing. Please wait a few seconds and try again.".to_string());
+        return Err(
+            "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
+        );
     }
     if req.node_id.starts_with('/') && !req.node_id.contains("::") {
-        return Err(format!("Error: '{}' is a File ID, not a Symbol ID. To view the contents or structural outline of this file, use 'get_file_structure' instead.", req.node_id));
+        return Err(format!(
+            "Error: '{}' is a File ID, not a Symbol ID. To view the contents or structural outline of this file, use 'get_file_structure' instead.",
+            req.node_id
+        ));
     }
 
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
     let node_id = crate::models::escape_cypher_string(&req.node_id);
-    
+
     let mut output = String::new();
-    
+
     let mut symbol_name = String::new();
-    
+
     // 1. Get properties
-    let q_props = format!("MATCH (s:Symbol {{id: '{}'}}) RETURN s.kind AS kind, s.signature AS signature, s.docstring AS docstring, s.name AS name", node_id);
+    let q_props = format!(
+        "MATCH (s:Symbol {{id: '{node_id}'}}) RETURN s.kind AS kind, s.signature AS signature, s.docstring AS docstring, s.name AS name"
+    );
     match conn.query(&q_props) {
         Ok(mut res) => {
             if let Some(row) = res.next() {
-                output.push_str(&format!("## Symbol: {}\n", node_id));
-                output.push_str(&format!("**Kind**: {}\n", row[0].to_string()));
+                output.push_str(&format!("## Symbol: {node_id}\n"));
+                output.push_str(&format!("**Kind**: {}\n", row[0]));
                 if let lbug::Value::String(sig) = &row[1] {
-                    if !sig.is_empty() { output.push_str(&format!("**Signature**: `{}`\n", sig)); }
+                    if !sig.is_empty() {
+                        output.push_str(&format!("**Signature**: `{sig}`\n"));
+                    }
                 }
                 if let lbug::Value::String(doc) = &row[2] {
-                    if !doc.is_empty() { output.push_str(&format!("**Docstring**: {}\n", doc)); }
+                    if !doc.is_empty() {
+                        output.push_str(&format!("**Docstring**: {doc}\n"));
+                    }
                 }
                 if let lbug::Value::String(name_val) = &row[3] {
                     symbol_name = name_val.clone();
                 }
-                output.push_str("\n");
+                output.push('\n');
             } else {
                 return Err(format!("Symbol not found: {}", req.node_id));
             }
@@ -157,19 +222,23 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     }
 
     // 2. Get container
-    let q_parent = format!("MATCH (parent)-[:CONTAINS]->(s:Symbol {{id: '{}'}}) RETURN label(parent) AS parent_label, parent.id AS parent_id", node_id);
+    let q_parent = format!(
+        "MATCH (parent)-[:CONTAINS]->(s:Symbol {{id: '{node_id}'}}) RETURN label(parent) AS parent_label, parent.id AS parent_id"
+    );
     if let Ok(mut res) = conn.query(&q_parent) {
         if let Some(row) = res.next() {
-            output.push_str(&format!("**Container**: {} (`{}`)\n\n", row[0].to_string(), row[1].to_string()));
+            output.push_str(&format!("**Container**: {} (`{}`)\n\n", row[0], row[1]));
         }
     }
 
     // 3. Get outgoing dependencies (CALLS or IMPORTS or INHERITS)
-    let q_out = format!("MATCH (s:Symbol {{id: '{}'}})-[r:CALLS|:IMPORTS|:INHERITS]->(dep:Symbol) RETURN label(r) AS rel_type, dep.id AS target_id", node_id);
-    if let Ok(mut res) = conn.query(&q_out) {
+    let q_out = format!(
+        "MATCH (s:Symbol {{id: '{node_id}'}})-[r:CALLS|:IMPORTS|:INHERITS]->(dep:Symbol) RETURN label(r) AS rel_type, dep.id AS target_id"
+    );
+    if let Ok(res) = conn.query(&q_out) {
         let mut deps = Vec::new();
-        while let Some(row) = res.next() {
-            deps.push(format!("- [{}] -> `{}`", row[0].to_string(), row[1].to_string()));
+        for row in res {
+            deps.push(format!("- [{}] -> `{}`", row[0], row[1]));
         }
         if !deps.is_empty() {
             output.push_str("### Outgoing Dependencies (What this symbol calls/imports)\n");
@@ -180,8 +249,8 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
 
     // 4. Get incoming usages
     let base_name = symbol_name.split("::").last().unwrap_or(&symbol_name);
-    let dot_base = format!(".{}", base_name);
-    let colon_base = format!("::{}", base_name);
+    let dot_base = format!(".{base_name}");
+    let colon_base = format!("::{base_name}");
 
     let q_in = format!(
         "MATCH (caller:Symbol)-[r:CALLS|:IMPORTS|:INHERITS]->(t:Symbol) 
@@ -189,24 +258,34 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
          OR (t.kind = 'unresolved_symbol' AND label(r) = 'CALLS' AND (t.name = '{base_name}' OR t.name ENDS WITH '{dot_base}' OR t.name ENDS WITH '{colon_base}')) 
          RETURN label(r) AS rel_type, caller.id AS caller_id, t.file AS file, t.line AS line LIMIT 100"
     );
-    if let Ok(mut res) = conn.query(&q_in) {
+    if let Ok(res) = conn.query(&q_in) {
         let mut usages = Vec::new();
-        while let Some(row) = res.next() {
+        for row in res {
             let rel_type = row[0].to_string();
             let caller_id = row[1].to_string();
-            let file = if let lbug::Value::String(f) = &row[2] { f.clone() } else { String::new() };
-            let line = if let lbug::Value::String(l) = &row[3] { l.clone() } else { String::new() };
-            
+            let file = if let lbug::Value::String(f) = &row[2] {
+                f.clone()
+            } else {
+                String::new()
+            };
+            let line = if let lbug::Value::String(l) = &row[3] {
+                l.clone()
+            } else {
+                String::new()
+            };
+
             if !file.is_empty() && !line.is_empty() {
                 let mut snippet_str = String::new();
                 if let Ok(line_num) = line.parse::<usize>() {
                     if let Some(snippet) = extract_snippet(&file, line_num, 2) {
-                        snippet_str = format!("\n```\n{}\n```", snippet);
+                        snippet_str = format!("\n```\n{snippet}\n```");
                     }
                 }
-                usages.push(format!("- `{}` -> [{}] at {}:{}{}", caller_id, rel_type, file, line, snippet_str));
+                usages.push(format!(
+                    "- `{caller_id}` -> [{rel_type}] at {file}:{line}{snippet_str}"
+                ));
             } else {
-                usages.push(format!("- `{}` -> [{}]", caller_id, rel_type));
+                usages.push(format!("- `{caller_id}` -> [{rel_type}]"));
             }
         }
         if !usages.is_empty() {
@@ -217,14 +296,16 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     }
 
     // 5. Get children (CONTAINS or DEFINES)
-    let q_children = format!("MATCH (s:Symbol {{id: '{}'}})-[r:CONTAINS|:DEFINES]->(child:Symbol) RETURN label(r) AS rel_type, child.id AS child_id, child.kind AS child_kind", node_id);
-    if let Ok(mut res) = conn.query(&q_children) {
+    let q_children = format!(
+        "MATCH (s:Symbol {{id: '{node_id}'}})-[r:CONTAINS|:DEFINES]->(child:Symbol) RETURN label(r) AS rel_type, child.id AS child_id, child.kind AS child_kind"
+    );
+    if let Ok(res) = conn.query(&q_children) {
         let mut children = Vec::new();
-        while let Some(row) = res.next() {
+        for row in res {
             let _rel = row[0].to_string();
             let c_id = row[1].to_string();
             let c_kind = row[2].to_string();
-            children.push(format!("- `{}` ({})", c_id, c_kind));
+            children.push(format!("- `{c_id}` ({c_kind})"));
         }
         if !children.is_empty() {
             output.push_str(&format!("### Contains ({} items)\n", children.len()));
@@ -239,14 +320,14 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
 fn extract_snippet(file_path: &str, line_num: usize, context_lines: usize) -> Option<String> {
     use std::fs::File;
     use std::io::{BufRead, BufReader};
-    
+
     let file = File::open(file_path).ok()?;
     let reader = BufReader::new(file);
     let mut snippet = String::new();
-    
+
     let start_line = line_num.saturating_sub(context_lines).max(1);
     let end_line = line_num + context_lines;
-    
+
     for (i, line_res) in reader.lines().enumerate() {
         let current_line = i + 1;
         if current_line > end_line {
@@ -254,11 +335,11 @@ fn extract_snippet(file_path: &str, line_num: usize, context_lines: usize) -> Op
         }
         if current_line >= start_line {
             if let Ok(line) = line_res {
-                snippet.push_str(&format!("{:4} | {}\n", current_line, line));
+                snippet.push_str(&format!("{current_line:4} | {line}\n"));
             }
         }
     }
-    
+
     if snippet.is_empty() {
         None
     } else {
@@ -272,12 +353,18 @@ fn scan_directory_recursively(dir: &std::path::Path, files: &mut Vec<String>) {
             let path = entry.path();
             if path.is_dir() {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                if name != ".git" && name != "node_modules" && name != "target" && name != "vendor" {
+                if name != ".git" && name != "node_modules" && name != "target" && name != "vendor"
+                {
                     scan_directory_recursively(&path, files);
                 }
             } else if let Some(ext) = path.extension() {
                 if ext == "rb" || ext == "rs" || ext == "ts" || ext == "tsx" {
-                    files.push(path.canonicalize().unwrap_or(path).to_string_lossy().to_string());
+                    files.push(
+                        path.canonicalize()
+                            .unwrap_or(path)
+                            .to_string_lossy()
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -286,24 +373,32 @@ fn scan_directory_recursively(dir: &std::path::Path, files: &mut Vec<String>) {
 
 pub fn handle_coverage_check(db_path: &str, req: CoverageCheckRequest) -> Result<String, String> {
     if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err("Database is currently indexing. Please wait a few seconds and try again.".to_string());
+        return Err(
+            "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
+        );
     }
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    
+
     let dir_path = std::path::Path::new(&req.directory_path);
     if !dir_path.exists() || !dir_path.is_dir() {
-        return Err(format!("Directory '{}' does not exist or is not a directory.", req.directory_path));
+        return Err(format!(
+            "Directory '{}' does not exist or is not a directory.",
+            req.directory_path
+        ));
     }
 
     let mut disk_files = Vec::new();
     scan_directory_recursively(dir_path, &mut disk_files);
-    
+
     let mut indexed_count = 0;
     let mut missing_files = Vec::new();
     let mut stale_files = Vec::new();
 
     for file_path in &disk_files {
-        let q = format!("MATCH (f:File {{id: '{}'}}) RETURN f.last_modified", crate::models::escape_cypher_string(file_path));
+        let q = format!(
+            "MATCH (f:File {{id: '{}'}}) RETURN f.last_modified",
+            crate::models::escape_cypher_string(file_path)
+        );
         match conn.query(&q) {
             Ok(mut res) => {
                 if let Some(row) = res.by_ref().next() {
@@ -311,7 +406,8 @@ pub fn handle_coverage_check(db_path: &str, req: CoverageCheckRequest) -> Result
                     if let lbug::Value::Int64(last_mod) = row[0] {
                         if let Ok(meta) = std::fs::metadata(file_path) {
                             if let Ok(modified) = meta.modified() {
-                                if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                                if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH)
+                                {
                                     if duration.as_secs() as i64 > last_mod {
                                         stale_files.push(file_path.clone());
                                     }
@@ -328,26 +424,32 @@ pub fn handle_coverage_check(db_path: &str, req: CoverageCheckRequest) -> Result
     }
 
     let mut output = format!("## Coverage Report for `{}`\n", req.directory_path);
-    output.push_str(&format!("- **Total Source Files on Disk**: {}\n", disk_files.len()));
-    output.push_str(&format!("- **Indexed**: {}\n", indexed_count));
+    output.push_str(&format!(
+        "- **Total Source Files on Disk**: {}\n",
+        disk_files.len()
+    ));
+    output.push_str(&format!("- **Indexed**: {indexed_count}\n"));
     output.push_str(&format!("- **Missing**: {}\n", missing_files.len()));
-    output.push_str(&format!("- **Stale (Needs Re-index)**: {}\n\n", stale_files.len()));
+    output.push_str(&format!(
+        "- **Stale (Needs Re-index)**: {}\n\n",
+        stale_files.len()
+    ));
 
     if !missing_files.is_empty() {
         output.push_str("### Sample Missing Files\n");
         for f in missing_files.iter().take(10) {
-            output.push_str(&format!("- `{}`\n", f));
+            output.push_str(&format!("- `{f}`\n"));
         }
         if missing_files.len() > 10 {
             output.push_str(&format!("- ... and {} more\n", missing_files.len() - 10));
         }
-        output.push_str("\n");
+        output.push('\n');
     }
 
     if !stale_files.is_empty() {
         output.push_str("### Sample Stale Files\n");
         for f in stale_files.iter().take(10) {
-            output.push_str(&format!("- `{}`\n", f));
+            output.push_str(&format!("- `{f}`\n"));
         }
         if stale_files.len() > 10 {
             output.push_str(&format!("- ... and {} more\n", stale_files.len() - 10));

@@ -121,13 +121,16 @@ pub fn auto_generate_lsif(project_root: &str) -> Result<String> {
             "Detected TypeScript/JS/React project. Native TS AST parsing will also be executed."
         );
         if lsif_path != "NATIVE_AST" {
-            lsif_path = format!("{},NATIVE_AST", lsif_path);
+            lsif_path = format!("{lsif_path},NATIVE_AST");
         } else {
             lsif_path = "NATIVE_AST".to_string();
         }
     }
 
-    if lsif_path == "NATIVE_AST" && !root.join("tsconfig.json").exists() && !root.join("package.json").exists() {
+    if lsif_path == "NATIVE_AST"
+        && !root.join("tsconfig.json").exists()
+        && !root.join("package.json").exists()
+    {
         return Err(anyhow::anyhow!(
             "No supported project files (Cargo.toml, tsconfig.json, Gemfile) detected in {project_root}.\n\
              Please generate the LSIF dump file manually and pass its path using `lsif_path`."
@@ -247,10 +250,7 @@ impl LsifContext {
                         } else {
                             Vec::new()
                         };
-                        self.item_edge_map
-                            .entry(out_v)
-                            .or_default()
-                            .extend(targets);
+                        self.item_edge_map.entry(out_v).or_default().extend(targets);
                     }
                 }
                 _ => {}
@@ -692,17 +692,34 @@ pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize
         return Err(e);
     }
     let conn = conn_res.unwrap();
-    
+
     let mut files_scanned = 0;
-    for entry in WalkDir::new(project_root).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(project_root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.file_type().is_file() {
             let path = entry.path();
             if let Some(ext) = path.extension() {
                 let ext_str = ext.to_string_lossy();
-                if ext_str == "ts" || ext_str == "tsx" || ext_str == "js" || ext_str == "jsx" {
+                if ext_str == "ts"
+                    || ext_str == "tsx"
+                    || ext_str == "js"
+                    || ext_str == "jsx"
+                    || ext_str == "py"
+                    || ext_str == "go"
+                    || ext_str == "rb"
+                    || ext_str == "rs"
+                {
                     let path_str = path.to_string_lossy().to_string();
-                    if !path_str.contains("node_modules") && !path_str.contains("/dist/") && !path_str.contains("/build/") {
-                        if let Ok(_) = crate::parser::parse_file(&path_str, &conn) {
+                    if !path_str.contains("node_modules")
+                        && !path_str.contains("/dist/")
+                        && !path_str.contains("/build/")
+                        && !path_str.contains("__pycache__")
+                        && !path_str.contains("/.venv/")
+                        && !path_str.contains("/vendor/")
+                    {
+                        if let Ok(_) = crate::indexer::parser::parse_file(&path_str, &conn) {
                             files_scanned += 1;
                         }
                     }
@@ -710,13 +727,13 @@ pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize
             }
         }
     }
-    
+
     crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
     // Now trigger import reconciliation explicitly
-    if let Err(e) = crate::reconciler::reconcile_imports(db_path) {
+    if let Err(e) = crate::indexer::reconciler::reconcile_imports(db_path) {
         tracing::error!("Failed to reconcile imports during deep scan: {}", e);
     }
-    
+
     Ok((files_scanned, 0))
 }
 
@@ -747,12 +764,19 @@ pub fn parse_and_import_lsif(
 
     let conn = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e))?;
 
-    let state_file = std::path::Path::new(db_path).parent().unwrap_or(std::path::Path::new(".")).join(".icnow_import_state.json");
+    let state_file = std::path::Path::new(db_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join(".icnow_import_state.json");
     let mut state = ImportState::default();
     if let Ok(data) = std::fs::read_to_string(&state_file) {
         if let Ok(s) = serde_json::from_str::<ImportState>(&data) {
             state = s;
-            tracing::info!("Resuming import from state: {} nodes, {} edges", state.nodes_imported, state.edges_imported);
+            tracing::info!(
+                "Resuming import from state: {} nodes, {} edges",
+                state.nodes_imported,
+                state.edges_imported
+            );
         }
     }
 
@@ -784,41 +808,47 @@ pub fn parse_and_import_lsif(
                 properties: safe_props,
             };
             let _ = node.save(&conn);
-            
+
             current_tx_nodes += 1;
             state.nodes_imported += 1;
             if current_tx_nodes >= 10 {
                 let _ = conn.query("COMMIT");
-                let _ = std::fs::write(&state_file, serde_json::to_string(&state).unwrap_or_default());
+                let _ = std::fs::write(
+                    &state_file,
+                    serde_json::to_string(&state).unwrap_or_default(),
+                );
                 current_tx_nodes = 0;
                 let _ = conn.query("BEGIN TRANSACTION");
             }
         }
-        
+
         for (source, target, props, label) in all_edges.into_iter().skip(state.edges_imported) {
             let mut safe_props = HashMap::new();
             for (k, v) in props {
                 safe_props.insert(k, v);
             }
             let edge = crate::models::Edge {
-                id: format!("{}::{}::{}", source, label, target),
+                id: format!("{source}::{label}::{target}"),
                 source,
                 target,
                 label,
                 properties: safe_props,
             };
             let _ = edge.save(&conn);
-            
+
             current_tx_nodes += 1;
             state.edges_imported += 1;
             if current_tx_nodes >= 10 {
                 let _ = conn.query("COMMIT");
-                let _ = std::fs::write(&state_file, serde_json::to_string(&state).unwrap_or_default());
+                let _ = std::fs::write(
+                    &state_file,
+                    serde_json::to_string(&state).unwrap_or_default(),
+                );
                 current_tx_nodes = 0;
                 let _ = conn.query("BEGIN TRANSACTION");
             }
         }
-        
+
         let _ = conn.query("COMMIT");
         let _ = std::fs::remove_file(&state_file);
     }
@@ -839,8 +869,9 @@ mod tests {
     #[test]
     fn test_lsif_parsing() {
         let db_path = "test_lsif.db";
-        let _ = std::fs::remove_file(db_path);
-        let _ = std::fs::remove_file(format!("{}.wal", db_path));
+        let _ = std::fs::remove_dir_all(db_path);
+        let _ = std::fs::remove_file(format!("{db_path}.wal"));
+        let _ = std::fs::remove_file(format!("{db_path}.wal"));
 
         // Create mock LSIF JSON lines file content
         let mock_content = r#"{"id":1,"type":"vertex","label":"metaData","version":"0.5.0","projectRoot":"file:///project"}
@@ -867,7 +898,8 @@ mod tests {
         assert_eq!(edges, 1); // File -> Function CONTAINS
 
         let _ = std::fs::remove_file(lsif_file_path);
-        let _ = std::fs::remove_file(db_path);
-        let _ = std::fs::remove_file(format!("{}.wal", db_path));
+        let _ = std::fs::remove_dir_all(db_path);
+        let _ = std::fs::remove_file(format!("{db_path}.wal"));
+        let _ = std::fs::remove_file(format!("{db_path}.wal"));
     }
 }

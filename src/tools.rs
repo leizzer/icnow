@@ -1,9 +1,9 @@
-use rmcp::{handler::server::wrapper::Parameters, schemars, tool, tool_router};
-use serde::Deserialize;
+use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use std::collections::HashMap;
 
-use crate::models::{Edge, Node};
 use crate::api_handlers::{memory, queries, tracing};
+pub mod structs;
+pub use structs::*;
 
 pub(crate) fn infer_project_root(file_path: &str) -> Option<String> {
     let path = std::path::Path::new(file_path);
@@ -51,7 +51,7 @@ impl GraphService {
         if let Some(ref r) = root {
             let path_buf = std::path::Path::new(r);
             let db_path = path_buf.join("knowledge.db").to_string_lossy().to_string();
-            crate::watcher::ensure_watching(path_buf, &db_path);
+            crate::indexer::watcher::ensure_watching(path_buf, &db_path);
             db_path
         } else {
             self.db_path.clone()
@@ -75,24 +75,34 @@ impl GraphService {
     #[tool(
         description = "Saves a new node (file, function, class, module, etc.) into the graph. Use this tool manually only if the static parser missed a specific node or when explicitly registering domain-level concepts like Rails Controllers/Models and their fields."
     )]
-    async fn save_node(&self, Parameters(req): Parameters<SaveNodeRequest>) -> Result<String, String> {
+    async fn save_node(
+        &self,
+        Parameters(req): Parameters<SaveNodeRequest>,
+    ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path =
-                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), Some(&req.node.id), None);
+            let db_path = svc.resolve_db_path_and_watch(
+                Some(req.project_root.as_str()),
+                Some(&req.node.id),
+                None,
+            );
             let graph =
                 crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
 
             req.node.save(&graph).map_err(|e| e.to_string())?;
 
             Ok(format!("Node {} saved successfully.", req.node.id))
-        }).await
+        })
+        .await
     }
 
     #[tool(
         description = "Creates or updates a directed edge between two existing nodes (e.g. connecting a caller function to a callee method, or mapping database entity relationships). Use this tool to explicitly link imports to their physical file targets, functions to their internal calls, or class inheritance/mixins."
     )]
-    async fn save_edge(&self, Parameters(req): Parameters<SaveEdgeRequest>) -> Result<String, String> {
+    async fn save_edge(
+        &self,
+        Parameters(req): Parameters<SaveEdgeRequest>,
+    ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
             let db_path = svc.resolve_db_path_and_watch(
@@ -106,7 +116,8 @@ impl GraphService {
             req.edge.save(&graph).map_err(|e| e.to_string())?;
 
             Ok(format!("Edge {} saved successfully.", req.edge.id))
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -118,13 +129,16 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path =
-                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), Some(&req.file_path), None);
+            let db_path = svc.resolve_db_path_and_watch(
+                Some(req.project_root.as_str()),
+                Some(&req.file_path),
+                None,
+            );
             let graph =
                 crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
             let _ = graph.query("BEGIN TRANSACTION");
-            let summary = crate::parser::parse_file(&req.file_path, &graph)
-                .map_err(|e| {
+            let summary =
+                crate::indexer::parser::parse_file(&req.file_path, &graph).map_err(|e| {
                     let _ = graph.query("ROLLBACK");
                     format!("Parse error: {e}")
                 })?;
@@ -180,10 +194,9 @@ impl GraphService {
             }
 
             Ok(out)
-        }).await
+        })
+        .await
     }
-
-
 
     #[tool(
         description = "Recursively walks the graph bidirectionally from a starting node up to a specified depth (max_depth) and returns an indented relationship list. Use this tool when you want to discover the neighborhood of dependencies, callers, or subclasses of a particular node in a single call."
@@ -194,10 +207,14 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path =
-                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, Some(&req.node_id));
+            let db_path = svc.resolve_db_path_and_watch(
+                Some(req.project_root.as_str()),
+                None,
+                Some(&req.node_id),
+            );
             tracing::handle_traverse_graph(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -209,9 +226,11 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
+            let db_path =
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             queries::handle_query_graph_cypher(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -223,9 +242,11 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
+            let db_path =
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             queries::handle_search_symbols(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -237,10 +258,14 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path =
-                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, Some(&req.node_id));
+            let db_path = svc.resolve_db_path_and_watch(
+                Some(req.project_root.as_str()),
+                None,
+                Some(&req.node_id),
+            );
             tracing::handle_get_dependencies(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -252,10 +277,14 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path =
-                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), Some(&req.file_path), None);
+            let db_path = svc.resolve_db_path_and_watch(
+                Some(req.project_root.as_str()),
+                Some(&req.file_path),
+                None,
+            );
             queries::handle_get_file_structure(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -267,9 +296,11 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
+            let db_path =
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             queries::handle_list_indexed_files(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -281,9 +312,14 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), Some(&req.directory_path), None);
+            let db_path = svc.resolve_db_path_and_watch(
+                Some(req.project_root.as_str()),
+                Some(&req.directory_path),
+                None,
+            );
             queries::handle_coverage_check(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -295,7 +331,8 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
+            let db_path =
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             let filter = req.filter_path.unwrap_or_default();
 
             crate::exporter::generate_html(&db_path, &req.output_path, &filter)
@@ -305,7 +342,8 @@ impl GraphService {
                 "Interactive map successfully generated and saved to: {}",
                 req.output_path
             ))
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -317,10 +355,14 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path =
-                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, Some(&req.node_id));
+            let db_path = svc.resolve_db_path_and_watch(
+                Some(req.project_root.as_str()),
+                None,
+                Some(&req.node_id),
+            );
             queries::handle_get_symbol_implementation(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -332,10 +374,14 @@ impl GraphService {
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path =
-                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, Some(&req.node_id));
+            let db_path = svc.resolve_db_path_and_watch(
+                Some(req.project_root.as_str()),
+                None,
+                Some(&req.node_id),
+            );
             queries::handle_get_symbol_info(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -353,7 +399,8 @@ impl GraphService {
                 Some(&req.start_node_id),
             );
             tracing::handle_trace_call_path(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -397,7 +444,10 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     #[tool(
         description = "Parses an LSIF (Language Server Index Format) dump file to extract precise definition and reference relationships across the codebase and imports them into the graph database. If no lsif_path is provided, it automatically detects the project type (Rust, Ruby, TypeScript/React) and generates the dump on the fly using standard CLI compilers."
     )]
-    async fn deep_scan(&self, Parameters(req): Parameters<DeepScanRequest>) -> Result<String, String> {
+    async fn deep_scan(
+        &self,
+        Parameters(req): Parameters<DeepScanRequest>,
+    ) -> Result<String, String> {
         let inferred_root = Some(req.project_root.clone())
             .or_else(|| {
                 std::env::current_dir()
@@ -414,25 +464,27 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
 
         tokio::task::spawn_blocking(move || {
             ::tracing::info!("Starting background deep scan for {}", inferred_root_clone);
-            
+
             let actual_lsif_path = match lsif_path_opt {
                 Some(path) => path,
-                None => {
-                    match crate::scanner::auto_generate_lsif(&inferred_root_clone) {
-                        Ok(generated) => generated,
-                        Err(e) => {
-                            ::tracing::error!("Auto-generation of LSIF failed: {}", e);
-                            return;
-                        }
+                None => match crate::indexer::scanner::auto_generate_lsif(&inferred_root_clone) {
+                    Ok(generated) => generated,
+                    Err(e) => {
+                        ::tracing::error!("Auto-generation of LSIF failed: {}", e);
+                        return;
                     }
-                }
+                },
             };
 
             crate::PAUSE_WATCHER.store(true, std::sync::atomic::Ordering::SeqCst);
             let import_res = if actual_lsif_path == "NATIVE_AST" {
-                crate::scanner::scan_directory_native(&inferred_root_clone, &db_path_clone)
+                crate::indexer::scanner::scan_directory_native(&inferred_root_clone, &db_path_clone)
             } else {
-                let res = crate::scanner::parse_and_import_lsif(&actual_lsif_path, &db_path_clone, Some(&inferred_root_clone));
+                let res = crate::indexer::scanner::parse_and_import_lsif(
+                    &actual_lsif_path,
+                    &db_path_clone,
+                    Some(&inferred_root_clone),
+                );
                 let _ = std::fs::remove_file(&actual_lsif_path);
                 res
             };
@@ -440,7 +492,11 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
 
             match import_res {
                 Ok((nodes, edges)) => {
-                    ::tracing::info!("Background LSIF/AST Import completed successfully. Nodes: {}, Edges: {}", nodes, edges);
+                    ::tracing::info!(
+                        "Background LSIF/AST Import completed successfully. Nodes: {}, Edges: {}",
+                        nodes,
+                        edges
+                    );
                     let remapped = crate::resolve_centralized_db_path(&db_path_clone);
                     if let Some(parent) = std::path::Path::new(&remapped).parent() {
                         let _ = std::fs::write(parent.join(".deep_scan_complete"), "");
@@ -453,8 +509,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
         });
 
         Ok(format!(
-            "Deep scan has been successfully offloaded to a background task and will be performed in chunks. The semantic graph database ({}) will incrementally populate over the next few minutes. You may continue using other tools concurrently without waiting.",
-            db_path
+            "Deep scan has been successfully offloaded to a background task and will be performed in chunks. The semantic graph database ({db_path}) will incrementally populate over the next few minutes. You may continue using other tools concurrently without waiting."
         ))
     }
 
@@ -467,14 +522,14 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
+            let db_path =
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             memory::handle_save_memory(&db_path, req)
-        }).await
+        })
+        .await
     }
 
-    #[tool(
-        description = "Returns the current version of the icnow MCP server."
-    )]
+    #[tool(description = "Returns the current version of the icnow MCP server.")]
     fn get_version(&self, _req: Parameters<GetVersionRequest>) -> Result<String, String> {
         Ok(env!("CARGO_PKG_VERSION").to_string())
     }
@@ -482,12 +537,17 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     #[tool(
         description = "[EXPERIMENTAL] Retrieves a detailed memory node, its description, associated keywords, and its connections to code files/methods and sub-concepts."
     )]
-    async fn get_memory(&self, Parameters(req): Parameters<GetMemoryRequest>) -> Result<String, String> {
+    async fn get_memory(
+        &self,
+        Parameters(req): Parameters<GetMemoryRequest>,
+    ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
+            let db_path =
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             memory::handle_get_memory(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -499,9 +559,11 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
+            let db_path =
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             memory::handle_search_memories(&db_path, req)
-        }).await
+        })
+        .await
     }
 
     #[tool(
@@ -513,9 +575,11 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     ) -> Result<String, String> {
         let svc = self.clone();
         blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
+            let db_path =
+                svc.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
             memory::handle_list_memories(&db_path, req)
-        }).await
+        })
+        .await
     }
 }
 
@@ -551,273 +615,6 @@ pub(crate) fn format_cypher_result(res: &mut lbug::QueryResult) -> Result<String
     Ok(out)
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SaveNodeRequest {
-    pub node: Node,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SaveEdgeRequest {
-    pub edge: Edge,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ParseFileRequest {
-    #[schemars(
-        description = "The absolute or relative path to the Rust (.rs), Ruby (.rb), TypeScript (.ts), or TSX (.tsx) file to parse."
-    )]
-    pub file_path: String,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct TraverseGraphRequest {
-    #[schemars(
-        description = "The globally unique string ID of the starting node (e.g. 'src/models.rs::Node')."
-    )]
-    pub node_id: String,
-    #[schemars(description = "Maximum depth of recursive hops to traverse. Defaults to 2.")]
-    pub max_depth: Option<u32>,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct QueryGraphCypherRequest {
-    #[schemars(
-        description = "The Cypher query string to execute. Example: 'MATCH (c:Class)-[:DEFINES]->(m) RETURN c.id, m.id LIMIT 10'"
-    )]
-    pub query: String,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SearchSymbolsRequest {
-    #[schemars(
-        description = "The symbol name or pattern to search for (e.g., 'UserController', 'main', 'save_node')."
-    )]
-    pub query: String,
-    #[schemars(description = "Optional limit on the number of results. Defaults to 50.")]
-    pub limit: Option<u32>,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-    #[schemars(
-        description = "Optional list of node labels to filter the results (e.g., ['Class', 'Method'])."
-    )]
-    pub kind_filter: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetDependenciesRequest {
-    #[schemars(
-        description = "The node ID or exact symbol name to trace dependencies for (e.g. 'src/main.rs::main' or just 'save_node')."
-    )]
-    pub node_id: String,
-    #[schemars(
-        description = "Direction to trace: 'incoming' (find callers of this node) or 'outgoing' (find what this node calls)."
-    )]
-    pub direction: String,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetSymbolInfoRequest {
-    #[schemars(
-        description = "The node ID to retrieve 360-degree context for (e.g. 'src/main.rs::main')."
-    )]
-    pub node_id: String,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ListIndexedFilesRequest {
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct CoverageCheckRequest {
-    #[schemars(
-        description = "The absolute path to the directory to check coverage for (e.g. '/path/to/app/services')."
-    )]
-    pub directory_path: String,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetFileStructureRequest {
-    #[schemars(
-        description = "The absolute or relative path to the file to query (e.g. '/path/to/app/models/user.rb')."
-    )]
-    pub file_path: String,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GenerateInteractiveMapRequest {
-    #[schemars(
-        description = "The absolute path where the HTML file should be saved (e.g. '/path/to/project/architecture.html')."
-    )]
-    pub output_path: String,
-    #[schemars(
-        description = "Optional path prefix to filter the exported graph. Only nodes starting with this path (e.g. a specific directory or file) will be included."
-    )]
-    pub filter_path: Option<String>,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetSymbolImplementationRequest {
-    #[schemars(
-        description = "The globally unique string ID of the node to retrieve source code for (e.g. 'src/models.rs::Node')."
-    )]
-    pub node_id: String,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct TraceCallPathRequest {
-    #[schemars(description = "The globally unique string ID of the starting node (caller).")]
-    pub start_node_id: String,
-    #[schemars(description = "The globally unique string ID of the target node (callee).")]
-    pub end_node_id: String,
-    #[schemars(
-        description = "Maximum depth of recursive hops to traverse. Defaults to 5. Maximum is 10."
-    )]
-    pub max_depth: Option<u32>,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetGraphSchemaRequest {
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct DeepScanRequest {
-    #[schemars(
-        description = "Optional path to a pre-generated LSIF dump file. If omitted, icnow will attempt to auto-generate the LSIF dump based on project detection."
-    )]
-    pub lsif_path: Option<String>,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SaveMemoryRequest {
-    #[schemars(
-        description = "The globally unique string ID of the memory node. MUST start with the prefix 'memory::' (e.g. 'memory::user_auth')."
-    )]
-    pub id: String,
-    #[schemars(
-        description = "A concise, human-readable name for the concept or logic block (e.g. 'User Authentication Flow')."
-    )]
-    pub name: String,
-    #[schemars(
-        description = "A detailed description of the memory concept, detailing its architectural role, business rules, or key steps."
-    )]
-    pub description: String,
-    #[schemars(
-        description = "A list of relevant keywords to index this memory for search (e.g. ['login', 'jwt', 'session'])."
-    )]
-    pub keywords: Vec<String>,
-    #[schemars(
-        description = "A list of globally unique IDs of code elements (Files, Classes, Methods) or other memory nodes that this concept explains or relates to."
-    )]
-    pub links: Vec<String>,
-    #[schemars(
-        description = "Optional custom label type for the relationship edges created. Defaults to 'EXPLAINS' for code nodes and 'SUB_CONCEPT' for memory nodes."
-    )]
-    pub link_type: Option<String>,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetMemoryRequest {
-    #[schemars(
-        description = "The globally unique string ID of the memory node to retrieve (must start with 'memory::')."
-    )]
-    pub id: String,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SearchMemoriesRequest {
-    #[schemars(
-        description = "The search query to match against memory names, descriptions, and keywords using vector similarity."
-    )]
-    pub query: String,
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ListMemoriesRequest {
-    #[schemars(
-        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
-    )]
-    pub project_root: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetVersionRequest {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -825,7 +622,8 @@ mod tests {
     #[tokio::test]
     async fn test_memory_nodes() {
         let db_path = "test_memories.db";
-        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_dir_all(db_path);
+        let _ = std::fs::remove_file(format!("{db_path}.wal"));
 
         let _conn = crate::open_db_connection(db_path).unwrap();
         let graph = crate::open_db_graph(db_path).unwrap();
@@ -860,28 +658,32 @@ mod tests {
         };
 
         // 2. Try to save a memory node with an invalid prefix
-        let err_res = service.save_memory(Parameters(SaveMemoryRequest {
-            id: "bad_prefix::auth".to_string(),
-            name: "Auth Flow".to_string(),
-            description: "Flow".to_string(),
-            keywords: vec![],
-            links: vec![],
-            link_type: None,
-            project_root: "".to_string(),
-        })).await;
+        let err_res = service
+            .save_memory(Parameters(SaveMemoryRequest {
+                id: "bad_prefix::auth".to_string(),
+                name: "Auth Flow".to_string(),
+                description: "Flow".to_string(),
+                keywords: vec![],
+                links: vec![],
+                link_type: None,
+                project_root: "".to_string(),
+            }))
+            .await;
         assert!(err_res.is_err());
         assert!(err_res.unwrap_err().contains("prefix"));
 
         // 3. Try to save with links that don't exist
-        let err_res = service.save_memory(Parameters(SaveMemoryRequest {
-            id: "memory::auth".to_string(),
-            name: "Auth Flow".to_string(),
-            description: "Flow".to_string(),
-            keywords: vec![],
-            links: vec!["src/non_existent.rs".to_string()],
-            link_type: None,
-            project_root: "".to_string(),
-        })).await;
+        let err_res = service
+            .save_memory(Parameters(SaveMemoryRequest {
+                id: "memory::auth".to_string(),
+                name: "Auth Flow".to_string(),
+                description: "Flow".to_string(),
+                keywords: vec![],
+                links: vec!["src/non_existent.rs".to_string()],
+                link_type: None,
+                project_root: "".to_string(),
+            }))
+            .await;
         assert!(err_res.is_err());
         assert!(err_res.unwrap_err().contains("Link target not found"));
 
@@ -896,7 +698,8 @@ mod tests {
                 links: vec!["src/main.rs".to_string()],
                 link_type: None,
                 project_root: "".to_string(),
-            })).await
+            }))
+            .await
             .unwrap();
         assert!(ok_res.contains("saved successfully"));
 
@@ -910,7 +713,8 @@ mod tests {
                 links: vec!["src/lib.rs".to_string()],
                 link_type: None,
                 project_root: "".to_string(),
-            })).await
+            }))
+            .await
             .unwrap();
         assert!(ok_res2.contains("saved successfully"));
 
@@ -919,7 +723,8 @@ mod tests {
             .get_memory(Parameters(GetMemoryRequest {
                 id: "memory::relative_test".to_string(),
                 project_root: "".to_string(),
-            })).await
+            }))
+            .await
             .unwrap();
         assert!(get_res2.contains("Relative Path Test"));
         assert!(get_res2.contains(&abs_file_path));
@@ -929,7 +734,8 @@ mod tests {
             .get_memory(Parameters(GetMemoryRequest {
                 id: "memory::auth".to_string(),
                 project_root: "".to_string(),
-            })).await
+            }))
+            .await
             .unwrap();
         assert!(get_res.contains("Auth Flow"));
         assert!(get_res.contains("JWT token validation"));
@@ -938,7 +744,10 @@ mod tests {
 
         // 6. Test list_memories
         let list_res = service
-            .list_memories(Parameters(ListMemoriesRequest { project_root: "".to_string() })).await
+            .list_memories(Parameters(ListMemoriesRequest {
+                project_root: "".to_string(),
+            }))
+            .await
             .unwrap();
         assert!(list_res.contains("Auth Flow"));
         assert!(list_res.contains("memory::auth"));
@@ -948,7 +757,8 @@ mod tests {
             .search_memories(Parameters(SearchMemoriesRequest {
                 query: "jwt token".to_string(),
                 project_root: "".to_string(),
-            })).await
+            }))
+            .await
             .unwrap();
         assert!(search_res.contains("Auth Flow"));
         assert!(search_res.contains("memory::auth"));
@@ -958,10 +768,12 @@ mod tests {
             .search_memories(Parameters(SearchMemoriesRequest {
                 query: "oauth".to_string(),
                 project_root: "".to_string(),
-            })).await
+            }))
+            .await
             .unwrap();
         assert!(search_res2.contains("Auth Flow"));
 
-        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_dir_all(db_path);
+        let _ = std::fs::remove_file(format!("{db_path}.wal"));
     }
 }

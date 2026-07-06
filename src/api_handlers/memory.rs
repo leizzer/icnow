@@ -1,4 +1,6 @@
-use crate::tools::{GetMemoryRequest, ListMemoriesRequest, SaveMemoryRequest, SearchMemoriesRequest};
+use crate::tools::{
+    GetMemoryRequest, ListMemoriesRequest, SaveMemoryRequest, SearchMemoriesRequest,
+};
 use lbug::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -52,7 +54,10 @@ pub struct MemoryListItem {
 }
 
 fn node_exists(conn: &lbug::Connection, id: &str) -> bool {
-    let q = format!("MATCH (n {{id: '{}'}}) RETURN n.id LIMIT 1", crate::models::escape_cypher_string(id));
+    let q = format!(
+        "MATCH (n {{id: '{}'}}) RETURN n.id LIMIT 1",
+        crate::models::escape_cypher_string(id)
+    );
     if let Ok(mut res) = conn.query(&q) {
         res.by_ref().next().is_some()
     } else {
@@ -91,14 +96,24 @@ fn resolve_target_id(id: &str, db_path: &str) -> String {
 }
 
 fn get_str(row: &[Value], cols: &[String], name: &str) -> String {
-    cols.iter().position(|c| c == name).and_then(|idx| {
-        if let Value::String(s) = &row[idx] { Some(s.clone()) } else { None }
-    }).unwrap_or_default()
+    cols.iter()
+        .position(|c| c == name)
+        .and_then(|idx| {
+            if let Value::String(s) = &row[idx] {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
 }
 
 pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<String, String> {
     if !req.id.starts_with("memory::") {
-        return Err("Memory ID must start with 'memory::' prefix. E.g. 'memory::user_auth_flow'".to_string());
+        return Err(
+            "Memory ID must start with 'memory::' prefix. E.g. 'memory::user_auth_flow'"
+                .to_string(),
+        );
     }
 
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
@@ -114,7 +129,8 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
             } else {
                 let mut found = false;
                 let escaped_target = crate::models::escape_cypher_string(target);
-                let q_search = format!("MATCH (n) WHERE n.name = '{}' RETURN n.id LIMIT 1", escaped_target);
+                let q_search =
+                    format!("MATCH (n) WHERE n.name = '{escaped_target}' RETURN n.id LIMIT 1");
                 if let Ok(mut res) = conn.query(&q_search) {
                     if let Some(row) = res.by_ref().next() {
                         if let Value::String(matched_id) = &row[0] {
@@ -124,7 +140,9 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
                     }
                 }
                 if !found {
-                    return Err(format!("Link target not found: '{target}' (also tried resolving to '{resolved}' and searching by name). Please make sure the code node has been scanned/indexed or the memory node exists."));
+                    return Err(format!(
+                        "Link target not found: '{target}' (also tried resolving to '{resolved}' and searching by name). Please make sure the code node has been scanned/indexed or the memory node exists."
+                    ));
                 }
             }
         }
@@ -139,9 +157,11 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
     let text_to_embed = format!("{} {} {}", req.name, req.description, keywords_str);
     let model = crate::get_embedding_model();
     let mut model_lock = model.lock().unwrap();
-    let embeddings = model_lock.embed(vec![text_to_embed], None).map_err(|e| format!("Failed to generate embedding: {}", e))?;
+    let embeddings = model_lock
+        .embed(vec![text_to_embed], None)
+        .map_err(|e| format!("Failed to generate embedding: {e}"))?;
     if let Some(emb) = embeddings.into_iter().next() {
-        let emb_str = format!("{:?}", emb);
+        let emb_str = format!("{emb:?}");
         props.insert("embedding".to_string(), emb_str);
     }
 
@@ -151,16 +171,25 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
         kind: "Memory".to_string(),
         properties: props,
     };
-    mem_node.save(&conn).map_err(|e| format!("Failed to save memory node: {e}"))?;
+    mem_node
+        .save(&conn)
+        .map_err(|e| format!("Failed to save memory node: {e}"))?;
 
-    let q_delete_links = format!("MATCH (m:Memory {{id: '{}'}})-[r]->() DELETE r", crate::models::escape_cypher_string(&req.id));
+    let q_delete_links = format!(
+        "MATCH (m:Memory {{id: '{}'}})-[r]->() DELETE r",
+        crate::models::escape_cypher_string(&req.id)
+    );
     let _ = conn.query(&q_delete_links);
 
     for target_id in &resolved_links {
         let rel = req.link_type.as_deref().unwrap_or_else(|| {
-            if target_id.starts_with("memory::") { "REFERENCES" } else { "REFERENCES" }
+            if target_id.starts_with("memory::") {
+                "REFERENCES"
+            } else {
+                "REFERENCES"
+            }
         });
-        
+
         let edge = crate::models::Edge {
             id: format!("{}::{}::{}", req.id, rel, target_id),
             source: req.id.clone(),
@@ -168,20 +197,28 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
             label: rel.to_string(),
             properties: HashMap::new(),
         };
-        edge.save(&conn).map_err(|e| format!("Failed to link {} to {}: {}", req.id, target_id, e))?;
+        edge.save(&conn)
+            .map_err(|e| format!("Failed to link {} to {}: {}", req.id, target_id, e))?;
     }
 
     crate::api_handlers::memory::backup_all_memories(&conn, db_path);
 
-    Ok(format!("Memory node '{}' saved successfully with {} links.", req.id, resolved_links.len()))
+    Ok(format!(
+        "Memory node '{}' saved successfully with {} links.",
+        req.id,
+        resolved_links.len()
+    ))
 }
 
 pub fn backup_all_memories(conn: &lbug::Connection, db_path: &str) {
-    let backup_path = std::path::Path::new(db_path).parent().unwrap().join("memories_backup.json");
-    
+    let backup_path = std::path::Path::new(db_path)
+        .parent()
+        .unwrap()
+        .join("memories_backup.json");
+
     let mut backups = Vec::new();
     let q = "MATCH (m:Memory) RETURN m.id AS id, m.name AS name, m.description AS description, m.keywords AS keywords, CAST(m.embedding AS STRING) AS embedding";
-    if let Ok(mut res) = conn.query(q) {
+    if let Ok(res) = conn.query(q) {
         let cols = res.get_column_names();
         let rows: Vec<_> = res.collect();
         for row in rows {
@@ -190,9 +227,12 @@ pub fn backup_all_memories(conn: &lbug::Connection, db_path: &str) {
             let description = get_str(&row, &cols, "description");
             let keywords = get_str(&row, &cols, "keywords");
             let embedding = get_str(&row, &cols, "embedding");
-            
+
             let mut links = Vec::new();
-            let l_q = format!("MATCH (m:Memory {{id: '{}'}})-[r]->(target) RETURN target.id AS target_id, struct_extract(r, '_LABEL') AS rel_type", crate::models::escape_cypher_string(&id));
+            let l_q = format!(
+                "MATCH (m:Memory {{id: '{}'}})-[r]->(target) RETURN target.id AS target_id, struct_extract(r, '_LABEL') AS rel_type",
+                crate::models::escape_cypher_string(&id)
+            );
             if let Ok(l_res) = conn.query(&l_q) {
                 let l_cols = l_res.get_column_names();
                 for l_row in l_res {
@@ -202,17 +242,27 @@ pub fn backup_all_memories(conn: &lbug::Connection, db_path: &str) {
                     });
                 }
             }
-            backups.push(BackupMemory { id, name, description, keywords, embedding, links });
+            backups.push(BackupMemory {
+                id,
+                name,
+                description,
+                keywords,
+                embedding,
+                links,
+            });
         }
     }
-    
+
     if let Ok(json) = serde_json::to_string_pretty(&backups) {
         let _ = std::fs::write(backup_path, json);
     }
 }
 
 pub fn restore_all_memories(conn: &lbug::Connection, db_path: &str) {
-    let backup_path = std::path::Path::new(db_path).parent().unwrap().join("memories_backup.json");
+    let backup_path = std::path::Path::new(db_path)
+        .parent()
+        .unwrap()
+        .join("memories_backup.json");
     if let Ok(json) = std::fs::read_to_string(&backup_path) {
         if let Ok(backups) = serde_json::from_str::<Vec<BackupMemory>>(&json) {
             for backup in backups {
@@ -221,7 +271,7 @@ pub fn restore_all_memories(conn: &lbug::Connection, db_path: &str) {
                 props.insert("description".to_string(), backup.description.clone());
                 props.insert("keywords".to_string(), backup.keywords.clone());
                 props.insert("embedding".to_string(), backup.embedding.clone());
-                
+
                 let mem_node = crate::models::Node {
                     id: backup.id.clone(),
                     label: "Memory".to_string(),
@@ -229,7 +279,7 @@ pub fn restore_all_memories(conn: &lbug::Connection, db_path: &str) {
                     properties: props,
                 };
                 let _ = mem_node.save(conn);
-                
+
                 for link in backup.links {
                     let edge = crate::models::Edge {
                         id: format!("{}::{}::{}", backup.id, link.rel_type, link.target_id),
@@ -252,8 +302,13 @@ pub fn handle_get_memory(db_path: &str, req: GetMemoryRequest) -> Result<String,
 
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
 
-    let q = format!("MATCH (m:Memory {{id: '{}'}}) RETURN m.name AS name, m.description AS description, m.keywords AS keywords", crate::models::escape_cypher_string(&req.id));
-    let mut res = conn.query(&q).map_err(|e| format!("Failed to query memory: {e}"))?;
+    let q = format!(
+        "MATCH (m:Memory {{id: '{}'}}) RETURN m.name AS name, m.description AS description, m.keywords AS keywords",
+        crate::models::escape_cypher_string(&req.id)
+    );
+    let mut res = conn
+        .query(&q)
+        .map_err(|e| format!("Failed to query memory: {e}"))?;
 
     let cols = res.get_column_names();
     let row = match res.by_ref().next() {
@@ -265,11 +320,16 @@ pub fn handle_get_memory(db_path: &str, req: GetMemoryRequest) -> Result<String,
     let description = get_str(&row, &cols, "description");
     let keywords = get_str(&row, &cols, "keywords");
 
-    let l_q = format!("MATCH (m:Memory {{id: '{}'}})-[r]->(target) RETURN target.id AS target_id, target.name AS target_name, struct_extract(r, '_LABEL') AS rel_type, label(target) AS target_labels", crate::models::escape_cypher_string(&req.id));
+    let l_q = format!(
+        "MATCH (m:Memory {{id: '{}'}})-[r]->(target) RETURN target.id AS target_id, target.name AS target_name, struct_extract(r, '_LABEL') AS rel_type, label(target) AS target_labels",
+        crate::models::escape_cypher_string(&req.id)
+    );
     let mut sub_concepts = Vec::new();
     let mut code_nodes = Vec::new();
 
-    let mut links_res = conn.query(&l_q).map_err(|e| format!("Failed to query links: {e}"))?;
+    let mut links_res = conn
+        .query(&l_q)
+        .map_err(|e| format!("Failed to query links: {e}"))?;
     let l_cols = links_res.get_column_names();
     for l_row in links_res.by_ref() {
         let target_id = get_str(&l_row, &l_cols, "target_id");
@@ -315,30 +375,40 @@ pub fn handle_get_memory(db_path: &str, req: GetMemoryRequest) -> Result<String,
 
 pub fn handle_search_memories(db_path: &str, req: SearchMemoriesRequest) -> Result<String, String> {
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    
+
     let limit = 10;
-    
+
     let model = crate::get_embedding_model();
     let mut model_lock = model.lock().unwrap();
-    let query_embeddings = model_lock.embed(vec![req.query.clone()], None).map_err(|e| format!("Failed to generate embedding: {}", e))?;
+    let query_embeddings = model_lock
+        .embed(vec![req.query.clone()], None)
+        .map_err(|e| format!("Failed to generate embedding: {e}"))?;
     let query_vector_str = if let Some(emb) = query_embeddings.into_iter().next() {
-        format!("{:?}", emb)
+        format!("{emb:?}")
     } else {
         return Err("Failed to generate embedding vector".to_string());
     };
-    
-    let q = format!("MATCH (m:Memory) WITH m, array_cosine_similarity(m.embedding, {}) AS sim WHERE sim > 0.3 RETURN m.id AS id, m.name AS name, m.description AS description, m.keywords AS keywords ORDER BY sim DESC LIMIT {}", query_vector_str, limit);
-    
-    let mut res = conn.query(&q).map_err(|e| format!("Failed to search memories: {e}"))?;
+
+    let q = format!(
+        "MATCH (m:Memory) WITH m, array_cosine_similarity(m.embedding, {query_vector_str}) AS sim WHERE sim > 0.3 RETURN m.id AS id, m.name AS name, m.description AS description, m.keywords AS keywords ORDER BY sim DESC LIMIT {limit}"
+    );
+
+    let mut res = conn
+        .query(&q)
+        .map_err(|e| format!("Failed to search memories: {e}"))?;
     let cols = res.get_column_names();
     let mut results = Vec::new();
-    
+
     for row in res.by_ref() {
         results.push(MemorySearchResult {
             id: get_str(&row, &cols, "id"),
             name: get_str(&row, &cols, "name"),
             description: get_str(&row, &cols, "description"),
-            keywords: get_str(&row, &cols, "keywords").split(", ").filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
+            keywords: get_str(&row, &cols, "keywords")
+                .split(", ")
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect(),
             snippet: None,
         });
     }
@@ -348,17 +418,19 @@ pub fn handle_search_memories(db_path: &str, req: SearchMemoriesRequest) -> Resu
 
 pub fn handle_list_memories(db_path: &str, _req: ListMemoriesRequest) -> Result<String, String> {
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    
-    let mut res = conn.query("MATCH (m:Memory) RETURN m.id AS id, m.name AS name").map_err(|e| format!("Failed to list memories: {e}"))?;
+
+    let mut res = conn
+        .query("MATCH (m:Memory) RETURN m.id AS id, m.name AS name")
+        .map_err(|e| format!("Failed to list memories: {e}"))?;
     let cols = res.get_column_names();
     let mut results = Vec::new();
-    
+
     for row in res.by_ref() {
         results.push(MemoryListItem {
             id: get_str(&row, &cols, "id"),
             name: get_str(&row, &cols, "name"),
         });
     }
-    
+
     Ok(serde_json::to_string_pretty(&results).unwrap())
 }

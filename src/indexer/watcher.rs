@@ -1,4 +1,5 @@
 use anyhow::Result;
+use lbug::{Connection, Value};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -6,12 +7,11 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::sync::{LazyLock, Mutex};
 use std::time::UNIX_EPOCH;
-use lbug::{Connection, Value};
 use walkdir::WalkDir;
 
 fn is_supported_file(path: &Path) -> bool {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        matches!(ext, "rs" | "rb" | "ts" | "tsx" | "js" | "jsx")
+        matches!(ext, "rs" | "rb" | "ts" | "tsx" | "js" | "jsx" | "py" | "go")
     } else {
         false
     }
@@ -23,7 +23,21 @@ fn is_ignored_dir(path: &Path) -> bool {
             let s_lower = s.to_lowercase();
             matches!(
                 s_lower.as_str(),
-                ".git" | ".bundle" | ".yarn" | "target" | "node" | "node_modules" | "vendor" | "tmp" | "log" | "coverage" | "public" | "dist" | "build"
+                ".git"
+                    | ".bundle"
+                    | ".yarn"
+                    | "target"
+                    | "node"
+                    | "node_modules"
+                    | "vendor"
+                    | "tmp"
+                    | "log"
+                    | "coverage"
+                    | "public"
+                    | "dist"
+                    | "build"
+                    | "__pycache__"
+                    | ".venv"
             ) || s_lower.starts_with('.') // ignore hidden directories/files
         } else {
             false
@@ -76,11 +90,11 @@ pub fn ensure_watching(project_root: &Path, db_path: &str) {
     });
 }
 
-
 fn delete_file_nodes(conn: &Connection, file_path: &str) -> Result<()> {
     let path_esc = file_path.replace("'", "''");
-    let query_sym = format!("MATCH (f:File {{id: '{}'}})-[:CONTAINS]->(s:Symbol) DETACH DELETE s", path_esc);
-    let query_file = format!("MATCH (f:File {{id: '{}'}}) DETACH DELETE f", path_esc);
+    let query_sym =
+        format!("MATCH (f:File {{id: '{path_esc}'}})-[:CONTAINS]->(s:Symbol) DETACH DELETE s");
+    let query_file = format!("MATCH (f:File {{id: '{path_esc}'}}) DETACH DELETE f");
     let _ = conn.query(&query_sym);
     let _ = conn.query(&query_file);
     Ok(())
@@ -88,19 +102,23 @@ fn delete_file_nodes(conn: &Connection, file_path: &str) -> Result<()> {
 
 fn get_val_str(row: &[Value], cols: &[String], name: &str) -> Option<String> {
     cols.iter().position(|c| c == name).and_then(|idx| {
-        if let Value::String(s) = &row[idx] { Some(s.clone()) } else { None }
+        if let Value::String(s) = &row[idx] {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
 fn get_val_int(row: &[Value], cols: &[String], name: &str) -> Option<i64> {
-    cols.iter().position(|c| c == name).and_then(|idx| {
-        match &row[idx] {
+    cols.iter()
+        .position(|c| c == name)
+        .and_then(|idx| match &row[idx] {
             Value::Int64(i) => Some(*i),
             Value::Int32(i) => Some(*i as i64),
             Value::String(s) => s.parse::<i64>().ok(),
             _ => None,
-        }
-    })
+        })
 }
 
 pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
@@ -111,14 +129,19 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     if let Ok(mut res) = conn.query("MATCH (f:File) RETURN f.id, f.last_modified") {
         let cols = res.get_column_names();
         for row in res.by_ref() {
-            if let (Some(id), Some(lm)) = (get_val_str(&row, &cols, "f.id"), get_val_int(&row, &cols, "f.last_modified")) {
+            if let (Some(id), Some(lm)) = (
+                get_val_str(&row, &cols, "f.id"),
+                get_val_int(&row, &cols, "f.last_modified"),
+            ) {
                 db_files.insert(id, lm as u64);
             }
         }
     }
 
     let mut disk_files = Vec::new();
-    let walker = WalkDir::new(root_dir).into_iter().filter_entry(|e| !is_ignored_dir(e.path()));
+    let walker = WalkDir::new(root_dir)
+        .into_iter()
+        .filter_entry(|e| !is_ignored_dir(e.path()));
     for entry in walker.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_file() && is_supported_file(path) {
@@ -181,7 +204,7 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
         let _ = conn.query("BEGIN TRANSACTION");
         for path in chunk {
             let _ = delete_file_nodes(&conn, path);
-            if let Err(e) = crate::parser::parse_file(path, &conn) {
+            if let Err(e) = crate::indexer::parser::parse_file(path, &conn) {
                 tracing::error!("Failed to parse file {}: {}", path, e);
             }
         }
@@ -196,7 +219,7 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
 
     let db_path_clone = db_path.to_string();
     std::thread::spawn(move || {
-        if let Err(e) = crate::reconciler::reconcile_imports(&db_path_clone) {
+        if let Err(e) = crate::indexer::reconciler::reconcile_imports(&db_path_clone) {
             tracing::error!("Import reconciliation failed: {}", e);
         }
     });
@@ -216,12 +239,12 @@ fn handle_watcher_event(event: Event, conn: &Connection) {
         let abs_path = fs::canonicalize(&path).unwrap_or(path);
         let path_str = abs_path.to_string_lossy().to_string();
         let exists = abs_path.exists();
-        
+
         if exists && abs_path.is_file() {
             tracing::debug!("Watcher: reindexing {}", path_str);
             let _ = conn.query("BEGIN TRANSACTION");
             let _ = delete_file_nodes(conn, &path_str);
-            if let Err(e) = crate::parser::parse_file(&path_str, conn) {
+            if let Err(e) = crate::indexer::parser::parse_file(&path_str, conn) {
                 tracing::error!("Failed to parse file {}: {}", path_str, e);
             }
             let _ = conn.query("COMMIT");
@@ -245,23 +268,37 @@ fn is_process_alive(pid: u32) -> bool {
 #[cfg(not(unix))]
 fn is_process_alive(pid: u32) -> bool {
     if cfg!(windows) {
-        if let Ok(output) = std::process::Command::new("tasklist").args(&["/FI", &format!("PID eq {}", pid)]).output() {
+        if let Ok(output) = std::process::Command::new("tasklist")
+            .args(&["/FI", &format!("PID eq {}", pid)])
+            .output()
+        {
             let stdout = String::from_utf8_lossy(&output.stdout);
             stdout.contains(&pid.to_string())
-        } else { false }
-    } else { false }
+        } else {
+            false
+        }
+    } else {
+        false
+    }
 }
 
 fn try_acquire_watcher_lock(conn: &Connection, pid: u32) -> std::result::Result<bool, String> {
     let _ = conn.query("CREATE NODE TABLE IF NOT EXISTS WatcherLock (id INT64, pid INT64, last_heartbeat INT64, PRIMARY KEY(id))");
 
-    let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    let now = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
 
     let mut current_lock: Option<(u32, i64)> = None;
-    if let Ok(mut res) = conn.query("MATCH (l:WatcherLock {id: 1}) RETURN l.pid, l.last_heartbeat") {
+    if let Ok(mut res) = conn.query("MATCH (l:WatcherLock {id: 1}) RETURN l.pid, l.last_heartbeat")
+    {
         let cols = res.get_column_names();
         if let Some(row) = res.by_ref().next() {
-            if let (Some(l_pid), Some(l_hb)) = (get_val_int(&row, &cols, "l.pid"), get_val_int(&row, &cols, "l.last_heartbeat")) {
+            if let (Some(l_pid), Some(l_hb)) = (
+                get_val_int(&row, &cols, "l.pid"),
+                get_val_int(&row, &cols, "l.last_heartbeat"),
+            ) {
                 current_lock = Some((l_pid as u32, l_hb));
             }
         }
@@ -270,7 +307,9 @@ fn try_acquire_watcher_lock(conn: &Connection, pid: u32) -> std::result::Result<
     let can_acquire = match current_lock {
         None => true,
         Some((lock_pid, heartbeat)) => {
-            if lock_pid == pid { true } else {
+            if lock_pid == pid {
+                true
+            } else {
                 let is_stale = now - heartbeat >= 15;
                 let is_dead = !is_process_alive(lock_pid);
                 is_stale || is_dead
@@ -279,7 +318,9 @@ fn try_acquire_watcher_lock(conn: &Connection, pid: u32) -> std::result::Result<
     };
 
     if can_acquire {
-        let query = format!("MERGE (l:WatcherLock {{id: 1}}) ON MATCH SET l.pid = {}, l.last_heartbeat = {} ON CREATE SET l.pid = {}, l.last_heartbeat = {}", pid, now, pid, now);
+        let query = format!(
+            "MERGE (l:WatcherLock {{id: 1}}) ON MATCH SET l.pid = {pid}, l.last_heartbeat = {now} ON CREATE SET l.pid = {pid}, l.last_heartbeat = {now}"
+        );
         match conn.query(&query) {
             Ok(_) => Ok(true),
             Err(e) => Err(e.to_string()),
@@ -289,10 +330,12 @@ fn try_acquire_watcher_lock(conn: &Connection, pid: u32) -> std::result::Result<
     }
 }
 
-
 pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
     let remapped = crate::resolve_centralized_db_path(&db_path);
-    let marker = std::path::Path::new(&remapped).parent().unwrap().join(".deep_scan_complete");
+    let marker = std::path::Path::new(&remapped)
+        .parent()
+        .unwrap()
+        .join(".deep_scan_complete");
     if marker.exists() {
         if let Ok(conn) = crate::open_db_connection(&db_path) {
             let mut needs_scan = true;
@@ -303,8 +346,13 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
             }
 
             if needs_scan {
-                tracing::info!("Auto-triggering deep scan recovery because .deep_scan_complete exists but DB is empty.");
-                let _ = crate::scanner::scan_directory_native(&root_dir.to_string_lossy(), &db_path);
+                tracing::info!(
+                    "Auto-triggering deep scan recovery because .deep_scan_complete exists but DB is empty."
+                );
+                let _ = crate::indexer::scanner::scan_directory_native(
+                    &root_dir.to_string_lossy(),
+                    &db_path,
+                );
             }
         }
     }
@@ -332,7 +380,10 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
         match try_acquire_watcher_lock(&conn, pid) {
             Ok(true) => {
                 if !is_active_watcher {
-                    tracing::info!("Acquired watcher lock for PID {}. Activating file watcher.", pid);
+                    tracing::info!(
+                        "Acquired watcher lock for PID {}. Activating file watcher.",
+                        pid
+                    );
                     is_active_watcher = true;
 
                     if let Err(e) = reconcile_workspace(&root_dir, &db_path) {
@@ -371,7 +422,9 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
                             if let Ok(res) = rx.recv_timeout(std::time::Duration::from_secs(5)) {
                                 match res {
                                     Ok(event) => {
-                                        if !crate::PAUSE_WATCHER.load(std::sync::atomic::Ordering::SeqCst) {
+                                        if !crate::PAUSE_WATCHER
+                                            .load(std::sync::atomic::Ordering::SeqCst)
+                                        {
                                             handle_watcher_event(event, &conn);
                                         }
                                     }
@@ -379,22 +432,26 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
                                 }
                             }
                         }
-                        tracing::info!("Watcher loop thread exiting cleanly.");
                     });
                 }
             }
             Ok(false) => {
                 if is_active_watcher {
-                    tracing::warn!("Lock stolen by another process. Stepping down as active watcher.");
+                    tracing::warn!(
+                        "Lock stolen by another process. Stepping down as active watcher."
+                    );
                     is_active_watcher = false;
-                    _active_watcher = None; 
+                    _active_watcher = None;
                 }
             }
             Err(e) => {
                 if !is_active_watcher {
                     tracing::warn!("Failed to initially acquire watcher lock in DB: {}", e);
                 } else {
-                    tracing::warn!("Failed to update watcher heartbeat in DB (transient lock?): {}", e);
+                    tracing::warn!(
+                        "Failed to update watcher heartbeat in DB (transient lock?): {}",
+                        e
+                    );
                 }
             }
         }
