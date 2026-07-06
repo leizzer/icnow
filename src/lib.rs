@@ -1,3 +1,5 @@
+extern crate openssl;
+
 pub mod api_handlers;
 pub mod database;
 pub mod exporter;
