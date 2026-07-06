@@ -71,7 +71,15 @@ Because `icnow` is a graph database, it doesn't just store code—it stores *kno
 - **Graph Linkage**: Because memories live in the same graph as your code, agents can create direct semantic edges between their text memories and actual code nodes.
 
 ## Zero-Config AST Parsing
-Tree-sitter natively extracts functions, classes, and imports across Rust, Ruby, TypeScript, and more—with zero external toolchain dependencies.
+Tree-sitter natively extracts functions, classes, and imports across your codebase with zero external toolchain dependencies. 
+
+**Currently Supported Languages:**
+- Python
+- Go
+- Rust
+- Ruby
+- TypeScript & JavaScript
+- React (TSX / JSX)
 
 ## Get started
 
