@@ -4,8 +4,7 @@
  ( •_•)>⌐■-■  / /  / /    /  |/ // / / / | /| / /  
  (⌐■_■)     _/ /  / /___ / /|  // /_/ /| |/ |/ /   
            /___/  \____//_/ |_/ \____/ |__/|__/    
-                                                   
-    The code knowledge graph MCP server for AI agents
+The code knowledge graph MCP server for AI agents
 </pre></div>
 
 <p align="center"><strong>10–80% less tokens for codebase traversal · Rust · Ladybug · AST parsing · Local-first · Zero-config</strong></p>
