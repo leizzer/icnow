@@ -65,27 +65,46 @@ Tree-sitter natively extracts functions, classes, and imports across Rust, Ruby,
 
 ## Get started
 
-```bash
-# 1 — Install
-cargo install icnow
+### 1. Install `icnow`
 
-# 2 — Configure your MCP Client (e.g. Claude Desktop)
-```
-Add the following to your MCP `config.json`:
-```json
-{
-  "mcpServers": {
-    "icnow": {
-      "command": "icnow",
-      "args": []
-    }
-  }
-}
+You can install the latest compiled release directly to your machine:
+
+**macOS & Linux:**
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/leizzer/icnow/releases/latest/download/icnow-installer.sh | sh
 ```
 
+**Windows:**
+```powershell
+irm https://github.com/leizzer/icnow/releases/latest/download/icnow-installer.ps1 | iex
+```
+
+### 2. Configure your AI Agent
+
+`icnow` comes with a built-in installer to automatically configure your favorite AI agent for global access across all your projects:
+
 ```bash
-# 3 — See the savings
-# Ask your AI: "List the subclasses of BaseHandler using icnow"
+# For Antigravity (global SKILL.md setup)
+icnow install-skill antigravity
+
+# For Cursor (global User settings.json injection)
+icnow install-skill cursor
+
+# For Claude Code (global MCP registration)
+icnow install-skill claude
+
+# For OpenAI/ChatGPT (prints Custom Instructions for you to copy)
+icnow install-skill openai
+```
+
+*(Note: The `install-skill` command assumes a global installation so `icnow` is available seamlessly across any codebase you work in.)*
+
+### 3. Uninstall
+
+To completely remove `icnow` global configurations, including the shared `~/.icnow/` directory used to store the centralized graph databases, run:
+
+```bash
+icnow uninstall
 ```
 
 ## Database Storage & Backup
