@@ -1,6 +1,6 @@
 [package]
 name = "icnow"
-version = "0.1.52"
+version = "0.1.53"
 edition = "2024"
 repository = "https://github.com/leizzer/icnow"
 
@@ -42,7 +42,7 @@ cargo-dist-version = "0.17.0"
 rust-toolchain-version = "1.88.0"
 ci = ["github"]
 installers = ["shell", "powershell"]
-targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 pr-run-mode = "plan"
 allow-dirty = ["ci"]
 windows-archive = ".tar.gz"
