@@ -29,6 +29,19 @@ fn resolve_db_path(current_dir: &std::path::Path) -> String {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 3 && args[1] == "install-skill" {
+        let target = &args[2];
+        if let Err(e) = icnow::installer::run_installer(target) {
+            eprintln!("Installation failed: {:?}", e);
+            std::process::exit(1);
+        }
+        return Ok(());
+    } else if args.len() >= 2 && args[1] == "install-skill" {
+        eprintln!("Usage: icnow install-skill <antigravity|claude|cursor|openai>");
+        std::process::exit(1);
+    }
+
     init_tracing();
 
     let current_dir = std::env::current_dir()?;
@@ -40,7 +53,7 @@ async fn main() -> Result<()> {
     let resource_service = ResourceHandler::new(service);
     let service_handle = resource_service.serve(stdio()).await?;
 
-    icnow::watcher::ensure_watching(&current_dir, &db_path);
+    icnow::indexer::watcher::ensure_watching(&current_dir, &db_path);
 
     service_handle.waiting().await?;
 

@@ -1,13 +1,11 @@
 pub mod api_handlers;
+pub mod installer;
 pub mod exporter;
-pub mod scanner;
+pub mod indexer;
 pub mod models;
-pub mod parser;
-pub mod reconciler;
 pub mod resources;
 pub mod prompts;
 pub mod tools;
-pub mod watcher;
 pub mod database;
 
 pub use database::*;
