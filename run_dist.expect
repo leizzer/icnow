@@ -1,8 +1,0 @@
-#!/usr/bin/expect -f
-set timeout -1
-spawn env PATH=$env(HOME)/.cargo/bin:$env(PATH) cargo dist init --ci github
-expect "check your release process"
-send "\r"
-expect "include an updater program"
-send "n\r"
-expect eof
