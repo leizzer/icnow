@@ -22,7 +22,7 @@ jobs:
     outputs:
       val: ${{ steps.plan.outputs.val }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install cargo-dist --version 0.17.0
       - id: plan
@@ -44,13 +44,13 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - run: cargo install cargo-dist --version 0.17.0
       - run: cargo dist build --target ${{ matrix.target }} --output-format json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-artifacts-${{ matrix.target }}
           path: target/distrib/
@@ -60,12 +60,12 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
         with:
           path: target/distrib/
           merge-multiple: true
       - run: ls -R target/distrib/
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: target/distrib/*
