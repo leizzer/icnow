@@ -25,6 +25,9 @@ The code knowledge graph MCP server for AI agents
 
 `icnow` compresses codebase discovery by representing your entire project as an instantly queryable graph database. AI agents stop blindly grepping and start resolving callers, subclasses, and dependencies with 100% precision in a fraction of the time. Same answers, 90% fewer tokens.
 
+> [!NOTE]
+> **No extra token cost or heavy lifting for the agent.** `icnow` performs all the complex parsing, indexing, and graph traversal locally on your machine. When the agent makes an MCP call, it simply receives the exact, precise answer it needs without having to burn tokens reading massive files or doing the heavy lifting itself.
+
 ## Why use a Semantic Graph?
 
 When AI agents rely on traditional text-search tools (like `grep` or `cat`) to navigate a codebase, they often consume large amounts of their context window reading full files just to understand structure. `icnow` provides a structured, queryable map of your project instead.
