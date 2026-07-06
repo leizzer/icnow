@@ -1,3 +1,5 @@
+extern crate openssl;
+
 use anyhow::Result;
 use icnow::resources::ResourceHandler;
 use icnow::tools::GraphService;
