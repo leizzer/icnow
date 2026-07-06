@@ -34,6 +34,13 @@ When AI agents rely on traditional text-search tools (like `grep` or `cat`) to n
 - **Context Assembly** — Agents can trace multi-hop dependency chains (e.g., *A calls B, which inherits from C*) in a single graph query.
 - **Improved Performance** — By minimizing input tokens, LLM API calls can become more cost-effective and responses return faster, while reducing context-loss issues.
 
+## Two Modes of Operation
+
+`icnow` operates flexibly depending on your system setup and needs:
+
+1. **Default Mode:** Out of the box, `icnow` scans your codebase instantly using advanced syntax analysis. It is incredibly fast, requires zero configuration, and immediately gives your agent a highly accurate map of functions, classes, and their relationships. A lightweight background watcher keeps this graph constantly up to date as you code.
+2. **Deep Scan Mode:** For users who need granular, compiler-level precision (such as resolving dynamic types or complex macros), agents can invoke the `deep_scan` tool. This mode leverages the Language Server Protocol (LSP). It takes significantly longer to run and **will fail if you do not have an LSP installed and configured** for your project's language. Most workflows work perfectly in Default Mode, so you can safely ignore `deep_scan` unless your agent explicitly needs it and you have an LSP ready.
+
 ## MCP Capabilities
 
 `icnow` provides a complete implementation of the Model Context Protocol (MCP), offering **Tools**, **Resources**, and **Prompts** to AI agents:
