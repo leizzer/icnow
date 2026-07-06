@@ -7,3 +7,4 @@
 *.html
 
 .fastembed_cache/
+*.db.wal
