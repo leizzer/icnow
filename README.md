@@ -14,8 +14,8 @@ The code knowledge graph MCP server for AI agents
 </p>
 
 <p align="center">
-  <a href="#get-started-60-seconds">Install</a> ·
-  <a href="#core-features">Features</a> ·
+  <a href="#get-started">Install</a> ·
+  <a href="#mcp-capabilities">Features</a> ·
   <a href="#proof">Proof</a> ·
   <a href="#agent-compatibility-matrix">Agents</a> ·
   <a href="https://github.com/leizzer/icnow">GitHub</a>
