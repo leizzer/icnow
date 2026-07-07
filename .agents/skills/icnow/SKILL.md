@@ -45,14 +45,9 @@ However, do **NOT** stubbornly force pure Cypher string-slicing if you just need
 
 ### 💸 The Recurring Token Cost — Why This Matters More Than You Think
 
-**Every LLM API call sends your entire context window to the model on every single turn.** A file read with `view_file` or `cat` doesn't just cost tokens once — those characters stay in context and are **re-sent and re-billed on every subsequent message** for the rest of the session.
+**Every LLM API call sends your entire context window to the model on every single turn.** A file read with `view_file` or `cat` doesn't just cost tokens once — those characters stay in context and are **re-sent on every subsequent message** for the rest of the session. The longer the session, the more it compounds.
 
-| Approach | Tokens on first read | Tokens per follow-up turn | Total over 10 turns |
-|---|---|---|---|
-| `view_file` (full file) | ~2,000 | +2,000 every turn | **~22,000 tokens** |
-| `icnow search_symbols` | ~200 | +200 every turn | **~2,200 tokens** |
-
-**This is a 10× difference in total session cost.** The longer a session goes on, the more it compounds. **Always prefer `icnow` for navigation and structure — save `view_file` for when you truly need the full implementation body.**
+**Always prefer `icnow` for navigation and structure — save `view_file` for when you truly need the full implementation body.**
 
 ### 🗺️ Quick Decision Tree: When to Use What
 
