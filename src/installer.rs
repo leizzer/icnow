@@ -1,7 +1,75 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
+/// Returns the absolute path of the currently running icnow binary.
+fn resolve_binary_path() -> Result<String> {
+    let exe = std::env::current_exe().context("Could not determine current executable path")?;
+    Ok(exe.to_string_lossy().to_string())
+}
+
+/// Ensures ~/.local/bin is registered in the system PATH for ALL processes,
+/// including GUI apps like Claude Desktop or Cursor.
+///
+/// - macOS: writes /etc/paths.d/icnow (requires sudo)
+/// - Linux: appends to ~/.profile
+fn ensure_path_registered() {
+    let bin_dir = match dirs::home_dir() {
+        Some(h) => h.join(".local/bin"),
+        None => return,
+    };
+    let bin_dir_str = bin_dir.to_string_lossy().to_string();
+
+    if cfg!(target_os = "macos") {
+        let paths_d = std::path::Path::new("/etc/paths.d/icnow");
+        if !paths_d.exists() {
+            println!("Registering ~/.local/bin in /etc/paths.d/icnow (requires sudo)...");
+            let status = Command::new("sudo")
+                .arg("sh")
+                .arg("-c")
+                .arg(format!("echo '{}' > /etc/paths.d/icnow", bin_dir_str))
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    println!("✓ /etc/paths.d/icnow created — ~/.local/bin is now in PATH for all apps (including GUI apps).");
+                }
+                _ => {
+                    eprintln!("⚠ Could not write /etc/paths.d/icnow. GUI apps may not find icnow automatically.");
+                    eprintln!("  You can fix this manually by running:");
+                    eprintln!("  echo '{}' | sudo tee /etc/paths.d/icnow", bin_dir_str);
+                }
+            }
+        } else {
+            println!("✓ /etc/paths.d/icnow already exists — PATH is configured.");
+        }
+    } else if cfg!(target_os = "linux") {
+        if let Some(home) = dirs::home_dir() {
+            let profile = home.join(".profile");
+            let export_line = format!("\nexport PATH=\"{}:$PATH\"  # added by icnow installer", bin_dir_str);
+            let already_set = std::fs::read_to_string(&profile)
+                .map(|c| c.contains(&bin_dir_str))
+                .unwrap_or(false);
+            if !already_set {
+                if let Err(e) = std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&profile)
+                    .and_then(|mut f| { use std::io::Write; f.write_all(export_line.as_bytes()) })
+                {
+                    eprintln!("⚠ Could not update ~/.profile: {e}");
+                } else {
+                    println!("✓ Added ~/.local/bin to ~/.profile — restart your session to apply.");
+                }
+            } else {
+                println!("✓ ~/.local/bin already in ~/.profile.");
+            }
+        }
+    }
+}
+
 pub fn run_installer(target: &str) -> Result<()> {
+    // Always ensure ~/.local/bin is in PATH system-wide before configuring any agent.
+    ensure_path_registered();
+
     match target {
         "antigravity" => install_antigravity(),
         "claude" => install_claude(),
@@ -49,10 +117,13 @@ fn install_antigravity() -> Result<()> {
             
         if let Some(servers_obj) = mcp_servers.as_object_mut() {
             if !servers_obj.contains_key("icnow") {
+                // Use the absolute binary path so GUI apps (Antigravity IDE, etc.)
+                // can find icnow regardless of their restricted $PATH.
+                let bin_path = resolve_binary_path().unwrap_or_else(|_| "icnow".to_string());
                 servers_obj.insert(
                     "icnow".to_string(),
                     serde_json::json!({
-                        "command": "icnow"
+                        "command": bin_path
                     }),
                 );
                 
@@ -75,14 +146,18 @@ fn install_antigravity() -> Result<()> {
 fn install_claude() -> Result<()> {
     println!("Registering icnow MCP server with Claude Code globally...");
 
-    // claude mcp add icnow "icnow"
+    // Use the absolute binary path so Claude Code (a GUI app) can find icnow
+    // even though GUI apps on macOS/Linux don't inherit the shell's $PATH.
+    let bin_path = resolve_binary_path().unwrap_or_else(|_| "icnow".to_string());
+    println!("Using binary path: {bin_path}");
+
     let status = Command::new("claude")
         .arg("mcp")
         .arg("add")
         .arg("--scope")
         .arg("user")
         .arg("icnow")
-        .arg("icnow")
+        .arg(&bin_path)
         .status()
         .context(
             "Failed to run 'claude' command. Make sure Claude Code is installed and in your PATH.",
