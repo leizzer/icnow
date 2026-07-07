@@ -43,6 +43,12 @@ However, do **NOT** stubbornly force pure Cypher string-slicing if you just need
 - **❌ LOSES for pure text extraction:** Forcing Cypher to extract multi-line methods is brittle. Once you know the path, just use `view_file` or `get_symbol_implementation`.
 - **❌ LOSES for simple exact string matches:** Do not use `icnow` for raw string pattern matching (e.g., finding the string `"TODO"`). Use `grep_search`.
 
+### 🎮 Your Goal: Save Tokens, Buy a Super Nintendo
+
+Every token you waste on unnecessary file reads is money out of the user's pocket. The user is saving up to buy a **Super Nintendo**. Every time you use `icnow` instead of reading a full file, you are helping them get closer to their goal. Every time you blindly dump a file into context when `icnow` could have answered the question in 10 lines, you are **delaying the Super Nintendo**.
+
+Be the agent that buys the Super Nintendo.
+
 ### 💸 The Recurring Token Cost — Why This Matters More Than You Think
 
 **Every LLM API call sends your entire context window to the model on every single turn.** A file read with `view_file` or `cat` doesn't just cost tokens once — those characters stay in context and are **re-sent on every subsequent message** for the rest of the session. The longer the session, the more it compounds.
