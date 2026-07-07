@@ -180,9 +180,10 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             (call method: (identifier) @import.method arguments: (argument_list (string (string_content) @name))) @import.node
             (call receiver: _ @call.receiver method: [(identifier) (constant)] @call.func) @call.node
             (call method: [(identifier) (constant)] @call.func) @call.node
+            (body_statement [(identifier) (constant)] @call.func) @call.node
             (class name: _ @inherits.source superclass: (superclass _ @inherits.target)) @inherits.node
             (call receiver: _ @instantiates.func method: (identifier) @_new (#eq? @_new "new")) @instantiates.node
-            (call method: (identifier) @import.method arguments: (argument_list (_) @depends.target) (#match? @import.method "^(include|extend)$")) @depends.node
+            (call method: (identifier) @import.method arguments: (argument_list (_) @depends.target) (#match? @import.method "^(include|extend|prepend)$")) @depends.node
             "#,
         ))
     } else if file_path.ends_with(".py") {
@@ -827,7 +828,7 @@ fn process_depends_node(
     let source_id = format!("{file_path}::{enclosing_name}");
     
     // Extract nested types
-    let type_ids = extract_identifiers(target_node, source_code, &["type_identifier", "identifier", "type_name", "type"]);
+    let type_ids = extract_identifiers(target_node, source_code, &["type_identifier", "identifier", "type_name", "type", "constant"]);
     let line = depends_node.start_position().row + 1;
 
     for target_text in type_ids {
@@ -844,7 +845,7 @@ fn process_depends_node(
         props.insert("line".to_string(), line.to_string());
         bulk_nodes.push((target_id.clone(), props, "Unresolved".to_string()));
 
-        bulk_edges.push((source_id.clone(), target_id, HashMap::new(), "DEPENDS_ON".to_string()));
+        bulk_edges.push((source_id.clone(), target_id, HashMap::new(), "IMPORTS".to_string()));
     }
 
     Ok(())
