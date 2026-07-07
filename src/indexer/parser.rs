@@ -47,13 +47,13 @@ fn extract_docstring(node: tree_sitter::Node, source_code: &[u8]) -> String {
 
 fn extract_identifiers(node: tree_sitter::Node, source_code: &[u8], kinds: &[&str]) -> Vec<String> {
     let mut results = Vec::new();
+    if kinds.contains(&node.kind()) {
+        if let Ok(text) = node.utf8_text(source_code) {
+            results.push(text.to_string());
+        }
+    }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if kinds.contains(&child.kind()) {
-            if let Ok(text) = child.utf8_text(source_code) {
-                results.push(text.to_string());
-            }
-        }
         results.extend(extract_identifiers(child, source_code, kinds));
     }
     results
@@ -181,6 +181,8 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             (call receiver: _ @call.receiver method: [(identifier) (constant)] @call.func) @call.node
             (call method: [(identifier) (constant)] @call.func) @call.node
             (body_statement [(identifier) (constant)] @call.func) @call.node
+            (argument_list [(identifier) (constant)] @call.func) @call.node
+            (assignment right: [(identifier) (constant)] @call.func) @call.node
             (class name: _ @inherits.source superclass: (superclass _ @inherits.target)) @inherits.node
             (call receiver: _ @instantiates.func method: (identifier) @_new (#eq? @_new "new")) @instantiates.node
             (call method: (identifier) @import.method arguments: (argument_list (_) @depends.target) (#match? @import.method "^(include|extend|prepend)$")) @depends.node
@@ -666,7 +668,7 @@ fn process_call_node(
     if !enclosing_func_name.is_empty() {
         let source_id = format!("{file_path}::{enclosing_func_name}");
         let line = call_node.start_position().row + 1;
-        let target_id = format!("{file_path}::unresolved_call_{line}");
+        let target_id = format!("{file_path}::unresolved_call_{line}_{target_name}");
 
         let mut props = HashMap::new();
         props.insert("name".to_string(), target_name.clone());

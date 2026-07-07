@@ -176,40 +176,92 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
         }
 
         // Advanced Import Resolution: Resolve floating function calls
-        let resolve_calls_query = format!(
-            "MATCH (caller)-[:CALLS]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}), (t:Symbol {{name: '{}', file: '{}'}}) \
-             MERGE (caller)-[:CALLS]->(t) \
+        let resolve_calls_query_sym = format!(
+            "MATCH (caller:Symbol)-[:CALLS]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}) MATCH (t:Symbol {{name: '{}', file: '{}'}}) \
+             CREATE (caller)-[:CALLS]->(t) \
              DETACH DELETE u",
             sym_name.replace("'", "''"),
             src.replace("'", "''"),
             sym_name.replace("'", "''"),
             target_file.replace("'", "''")
         );
-        let _ = conn.query(&resolve_calls_query);
+        let _ = conn.query(&resolve_calls_query_sym);
+        let resolve_calls_query_file = format!(
+            "MATCH (caller:File)-[:CALLS]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}) MATCH (t:Symbol {{name: '{}', file: '{}'}}) \
+             CREATE (caller)-[:CALLS]->(t) \
+             DETACH DELETE u",
+            sym_name.replace("'", "''"),
+            src.replace("'", "''"),
+            sym_name.replace("'", "''"),
+            target_file.replace("'", "''")
+        );
+        let _ = conn.query(&resolve_calls_query_file);
 
         // Advanced Import Resolution: Resolve floating instantiations
-        let resolve_inst_query = format!(
-            "MATCH (caller)-[:INSTANTIATES]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}), (t:Symbol {{name: '{}', file: '{}'}}) \
-             MERGE (caller)-[:INSTANTIATES]->(t) \
+        let resolve_inst_query_sym = format!(
+            "MATCH (caller:Symbol)-[:INSTANTIATES]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}) MATCH (t:Symbol {{name: '{}', file: '{}'}}) \
+             CREATE (caller)-[:INSTANTIATES]->(t) \
              DETACH DELETE u",
             sym_name.replace("'", "''"),
             src.replace("'", "''"),
             sym_name.replace("'", "''"),
             target_file.replace("'", "''")
         );
-        let _ = conn.query(&resolve_inst_query);
+        let _ = conn.query(&resolve_inst_query_sym);
+        let resolve_inst_query_file = format!(
+            "MATCH (caller:File)-[:INSTANTIATES]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}) MATCH (t:Symbol {{name: '{}', file: '{}'}}) \
+             CREATE (caller)-[:INSTANTIATES]->(t) \
+             DETACH DELETE u",
+            sym_name.replace("'", "''"),
+            src.replace("'", "''"),
+            sym_name.replace("'", "''"),
+            target_file.replace("'", "''")
+        );
+        let _ = conn.query(&resolve_inst_query_file);
 
         // Advanced Import Resolution: Resolve floating dependencies
-        let resolve_depends_query = format!(
-            "MATCH (caller)-[:DEPENDS_ON]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}), (t:Symbol {{name: '{}', file: '{}'}}) \
-             MERGE (caller)-[:DEPENDS_ON]->(t) \
+        let resolve_depends_query_sym = format!(
+            "MATCH (caller:Symbol)-[:DEPENDS_ON]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}) MATCH (t:Symbol {{name: '{}', file: '{}'}}) \
+             CREATE (caller)-[:DEPENDS_ON]->(t) \
              DETACH DELETE u",
             sym_name.replace("'", "''"),
             src.replace("'", "''"),
             sym_name.replace("'", "''"),
             target_file.replace("'", "''")
         );
-        let _ = conn.query(&resolve_depends_query);
+        let _ = conn.query(&resolve_depends_query_sym);
+        let resolve_depends_query_file = format!(
+            "MATCH (caller:File)-[:DEPENDS_ON]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}) MATCH (t:Symbol {{name: '{}', file: '{}'}}) \
+             CREATE (caller)-[:DEPENDS_ON]->(t) \
+             DETACH DELETE u",
+            sym_name.replace("'", "''"),
+            src.replace("'", "''"),
+            sym_name.replace("'", "''"),
+            target_file.replace("'", "''")
+        );
+        let _ = conn.query(&resolve_depends_query_file);
+
+        // Advanced Import Resolution: Resolve floating imports
+        let resolve_imports_query_sym = format!(
+            "MATCH (caller:Symbol)-[:IMPORTS]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}) MATCH (t:Symbol {{name: '{}', file: '{}'}}) \
+             CREATE (caller)-[:IMPORTS]->(t) \
+             DETACH DELETE u",
+            sym_name.replace("'", "''"),
+            src.replace("'", "''"),
+            sym_name.replace("'", "''"),
+            target_file.replace("'", "''")
+        );
+        let _ = conn.query(&resolve_imports_query_sym);
+        let resolve_imports_query_file = format!(
+            "MATCH (caller:File)-[:IMPORTS]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}) MATCH (t:Symbol {{name: '{}', file: '{}'}}) \
+             CREATE (caller)-[:IMPORTS]->(t) \
+             DETACH DELETE u",
+            sym_name.replace("'", "''"),
+            src.replace("'", "''"),
+            sym_name.replace("'", "''"),
+            target_file.replace("'", "''")
+        );
+        let _ = conn.query(&resolve_imports_query_file);
     }
 
     for i_id in to_delete {
@@ -298,14 +350,20 @@ pub fn reconcile_unresolved_symbols(conn: &lbug::Connection) -> Result<()> {
             }
 
             if let Some(target_id) = best_match {
-                // Re-wire CALLS, INSTANTIATES, DEPENDS_ON, INHERITS edges
-                for edge_type in &["CALLS", "INSTANTIATES", "DEPENDS_ON", "INHERITS"] {
-                    let rewire_query = format!(
-                        "MATCH (caller)-[:{edge_type}]->(u:Symbol {{id: '{}'}}), (t:Symbol {{id: '{}'}})                          MERGE (caller)-[:{edge_type}]->(t)",
+                // Re-wire CALLS, INSTANTIATES, DEPENDS_ON, INHERITS, IMPORTS edges
+                for edge_type in &["CALLS", "INSTANTIATES", "DEPENDS_ON", "INHERITS", "IMPORTS"] {
+                    let rewire_query_sym = format!(
+                        "MATCH (caller:Symbol)-[:{edge_type}]->(u:Symbol {{id: '{}'}}) MATCH (t:Symbol {{id: '{}'}}) CREATE (caller)-[:{edge_type}]->(t)",
                         u_id.replace("'", "''"),
                         target_id.replace("'", "''")
                     );
-                    let _ = conn.query(&rewire_query);
+                    let _ = conn.query(&rewire_query_sym);
+                    let rewire_query_file = format!(
+                        "MATCH (caller:File)-[:{edge_type}]->(u:Symbol {{id: '{}'}}) MATCH (t:Symbol {{id: '{}'}}) CREATE (caller)-[:{edge_type}]->(t)",
+                        u_id.replace("'", "''"),
+                        target_id.replace("'", "''")
+                    );
+                    let _ = conn.query(&rewire_query_file);
                 }
                 
                 // Delete the unresolved node
