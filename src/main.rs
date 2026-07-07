@@ -48,6 +48,12 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
         return Ok(());
+    } else if args.len() >= 2 && args[1] == "update" {
+        if let Err(e) = icnow::installer::run_update() {
+            eprintln!("Update failed: {e:?}");
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     init_tracing();

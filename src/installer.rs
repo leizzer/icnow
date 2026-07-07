@@ -233,3 +233,53 @@ pub fn run_uninstall() -> Result<()> {
     println!("Uninstall complete.");
     Ok(())
 }
+
+pub fn run_update() -> Result<()> {
+    println!("Updating icnow to the latest version...");
+
+    if cfg!(target_os = "windows") {
+        // Windows: use PowerShell to download and run the installer script
+        let url = "https://github.com/leizzer/icnow/releases/latest/download/icnow-installer.ps1";
+        println!("Downloading installer from {url}");
+        let status = Command::new("powershell")
+            .arg("-NoProfile")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-Command")
+            .arg(format!("irm '{url}' | iex"))
+            .status()
+            .context("Failed to run PowerShell. Make sure PowerShell is installed and in your PATH.")?;
+
+        if status.success() {
+            println!("icnow updated successfully!");
+        } else {
+            anyhow::bail!("Update failed with exit code: {status}");
+        }
+    } else {
+        // macOS / Linux: use curl + sh
+        let url = "https://github.com/leizzer/icnow/releases/latest/download/icnow-installer.sh";
+        println!("Downloading installer from {url}");
+
+        // Check curl is available
+        let curl_check = Command::new("curl").arg("--version").output();
+        if curl_check.is_err() {
+            anyhow::bail!("'curl' is required but was not found in PATH. Please install curl and try again.");
+        }
+
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "curl --proto '=https' --tlsv1.2 -LsSf '{url}' | sh"
+            ))
+            .status()
+            .context("Failed to run the update script.")?;
+
+        if status.success() {
+            println!("icnow updated successfully!");
+        } else {
+            anyhow::bail!("Update failed with exit code: {status}");
+        }
+    }
+
+    Ok(())
+}
