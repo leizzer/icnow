@@ -30,6 +30,45 @@ fn install_antigravity() -> Result<()> {
         "File modified: {}",
         target_file.display()
     );
+
+    // Also inject the MCP server configuration into mcp_config.json
+    let mcp_config_path = home.join(".gemini/config/mcp_config.json");
+    
+    let mut json: serde_json::Value = if mcp_config_path.exists() {
+        let content = std::fs::read_to_string(&mcp_config_path)
+            .context("Failed to read mcp_config.json")?;
+        serde_json::from_str(&content).context("Failed to parse mcp_config.json as JSON")?
+    } else {
+        serde_json::json!({ "mcpServers": {} })
+    };
+
+    if let Some(obj) = json.as_object_mut() {
+        let mcp_servers = obj
+            .entry("mcpServers".to_string())
+            .or_insert_with(|| serde_json::json!({}));
+            
+        if let Some(servers_obj) = mcp_servers.as_object_mut() {
+            if !servers_obj.contains_key("icnow") {
+                servers_obj.insert(
+                    "icnow".to_string(),
+                    serde_json::json!({
+                        "command": "icnow"
+                    }),
+                );
+                
+                let updated_content = serde_json::to_string_pretty(&json)
+                    .context("Failed to serialize updated mcp_config.json")?;
+                
+                std::fs::write(&mcp_config_path, updated_content)
+                    .context("Failed to write updated mcp_config.json")?;
+                    
+                println!("File modified: {}", mcp_config_path.display());
+            } else {
+                println!("icnow is already registered in {}", mcp_config_path.display());
+            }
+        }
+    }
+
     Ok(())
 }
 
