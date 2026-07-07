@@ -36,6 +36,7 @@ When AI agents rely on traditional text-search tools (like `grep` or `cat`) to n
 - **Semantic Navigation** — Agents don't have to rely on regex patterns. They can query explicit semantic relationships like *"Find all nodes that call the `authenticate` function."*
 - **Context Assembly** — Agents can trace multi-hop dependency chains (e.g., *A calls B, which inherits from C*) in a single graph query.
 - **Improved Performance** — By minimizing input tokens, LLM API calls can become more cost-effective and responses return faster, while reducing context-loss issues.
+- **Recurring Cost, Not One-Time** — Every LLM API call sends the entire context window to the model on every turn. A file read with `cat` or `view_file` doesn't just cost tokens once — those characters stay in context and are re-sent (and re-billed) on every subsequent message for the rest of the session. `icnow` returns only the precise answer needed (~200 chars vs ~2,000 for a full file read), keeping the context lean across the entire session. Over a 10-turn coding session, this compounds to a **~10× difference in total token spend**.
 
 ## Two Modes of Operation
 
