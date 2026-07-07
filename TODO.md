@@ -42,3 +42,17 @@ This document outlines the approved new tools and enhancements for the `icnow` c
 ### [x] 3. Fix SQLite Lock Errors (`database is locked (5)`)
 * **Enhancement**: In `src/parser.rs`, accumulating nodes/edges and inserting them in a batch transaction using `graphqlite`'s bulk insertion APIs, instead of autocommitting thousands of times per file.
 * **Why**: This prevents `icnow` from locking up the shared macOS directory during parsing and allows us to re-enable `CALL` node extraction safely.
+
+## 🔗 Missing DEPENDS_ON Opportunities
+
+### [x] 1. TypeScript/JavaScript `implements` clauses
+* **Description**: Capture `implements_clause` as `DEPENDS_ON` edges for classes implementing interfaces.
+* **Why**: The `extends_clause` is currently captured, but `implements` (which enforces a dependency on an interface structure) is missing from the tree-sitter queries.
+
+### [x] 2. Python Class Fields
+* **Description**: Capture `DEPENDS_ON` for class fields (e.g., `dataclasses` and `pydantic` structural dependencies).
+* **Why**: Modern Python relies on type hints defined at the class level (`user: UserInfo = None`), which are not currently captured.
+
+### [x] 3. Go Type Aliases and Composites
+* **Description**: Capture `DEPENDS_ON` for type aliases and composited declarations (e.g., `type HandlerFunc func(...)`).
+* **Why**: This will capture explicit type composition dependencies beyond standard struct fields and function signatures.

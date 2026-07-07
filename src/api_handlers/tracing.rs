@@ -34,12 +34,12 @@ pub fn handle_get_dependencies(
 
     let q = if req.direction == "incoming" {
         format!(
-            "MATCH (t:Symbol)-[:CALLS|:IMPORTS]->(s:Symbol {{id: '{}'}}) RETURN t.id AS target_id, t.name AS name, t.kind AS kind",
+            "MATCH (t:Symbol)-[:CALLS|:IMPORTS|:DEPENDS_ON|:INHERITS|:INSTANTIATES]->(s:Symbol {{id: '{}'}}) RETURN t.id AS target_id, t.name AS name, t.kind AS kind",
             req.node_id.replace("'", "''")
         )
     } else {
         format!(
-            "MATCH (s:Symbol {{id: '{}'}})-[:CALLS|:IMPORTS]->(t:Symbol) RETURN t.id AS target_id, t.name AS name, t.kind AS kind",
+            "MATCH (s:Symbol {{id: '{}'}})-[:CALLS|:IMPORTS|:DEPENDS_ON|:INHERITS|:INSTANTIATES]->(t:Symbol) RETURN t.id AS target_id, t.name AS name, t.kind AS kind",
             req.node_id.replace("'", "''")
         )
     };

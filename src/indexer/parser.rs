@@ -163,6 +163,9 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             (call_expression function: _ @call.func) @call.node
             (impl_item trait: _ @inherits.target type: _ @inherits.source) @inherits.node
             (struct_expression name: _ @instantiates.func) @instantiates.node
+            (function_item parameters: (parameters (parameter type: _ @depends.target))) @depends.node
+            (function_item return_type: _ @depends.target) @depends.node
+            (struct_item (field_declaration_list (field_declaration type: _ @depends.target))) @depends.node
             "#,
         ))
     } else if file_path.ends_with(".rb") {
@@ -179,6 +182,7 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             (call method: [(identifier) (constant)] @call.func) @call.node
             (class name: _ @inherits.source superclass: (superclass _ @inherits.target)) @inherits.node
             (call receiver: _ @instantiates.func method: (identifier) @_new (#eq? @_new "new")) @instantiates.node
+            (call method: (identifier) @import.method arguments: (argument_list (_) @depends.target) (#match? @import.method "^(include|extend)$")) @depends.node
             "#,
         ))
     } else if file_path.ends_with(".py") {
@@ -192,6 +196,9 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             (import_from_statement module_name: (dotted_name) @import.source) @import.node
             (call function: _ @call.func) @call.node
             (class_definition name: (identifier) @inherits.source superclasses: (argument_list (_) @inherits.target)) @inherits.node
+            (function_definition parameters: (parameters (typed_parameter type: _ @depends.target))) @depends.node
+            (function_definition return_type: _ @depends.target) @depends.node
+            (class_definition body: (block (_ (type) @depends.target))) @depends.node
             "#,
         ))
     } else if file_path.ends_with(".go") {
@@ -206,6 +213,12 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             (call_expression function: _ @call.func) @call.node
             (struct_type (field_declaration_list (field_declaration type: (type_identifier) @inherits.target))) @inherits.node
             (composite_literal type: _ @instantiates.func) @instantiates.node
+            (function_declaration parameters: (parameter_list (parameter_declaration type: _ @depends.target))) @depends.node
+            (function_declaration result: _ @depends.target) @depends.node
+            (method_declaration parameters: (parameter_list (parameter_declaration type: _ @depends.target))) @depends.node
+            (method_declaration result: _ @depends.target) @depends.node
+            (struct_type (field_declaration_list (field_declaration type: _ @depends.target))) @depends.node
+            (type_declaration (type_spec type: _ @depends.target)) @depends.node
             "#,
         ))
     } else if file_path.ends_with(".ts")
@@ -232,6 +245,13 @@ fn get_language_and_query(file_path: &str) -> Result<(tree_sitter::Language, &'s
             
             (class_declaration name: (type_identifier) @inherits.source (class_heritage (extends_clause value: [(identifier) (type_identifier)] @inherits.target))) @inherits.node
             (new_expression constructor: _ @instantiates.func) @instantiates.node
+            
+            (function_declaration parameters: (formal_parameters (required_parameter type: (type_annotation _ @depends.target)))) @depends.node
+            (function_declaration return_type: (type_annotation _ @depends.target)) @depends.node
+            (method_definition parameters: (formal_parameters (required_parameter type: (type_annotation _ @depends.target)))) @depends.node
+            (method_definition return_type: (type_annotation _ @depends.target)) @depends.node
+            (property_signature type: (type_annotation _ @depends.target)) @depends.node
+            (class_declaration name: (type_identifier) @inherits.source (class_heritage (implements_clause (_) @depends.target))) @depends.node
             "#,
         ))
     } else {
@@ -702,6 +722,134 @@ fn process_inherits_node(
     Ok(())
 }
 
+
+fn process_depends_node(
+    depends_node: tree_sitter::Node,
+    capture_map: &HashMap<&str, tree_sitter::Node>,
+    file_path: &str,
+    source_code: &[u8],
+    bulk_nodes: &mut Vec<(String, HashMap<String, String>, String)>,
+    bulk_edges: &mut Vec<(String, String, HashMap<String, String>, String)>,
+) -> Result<()> {
+    let target_node = match capture_map.get("depends.target") {
+        Some(&n) => n,
+        None => return Ok(()),
+    };
+
+    let mut curr = Some(depends_node);
+    let mut enclosing_name = String::new();
+
+    while let Some(n) = curr {
+        let k = n.kind();
+        if k == "function_item"
+            || k == "method"
+            || k == "singleton_method"
+            || k == "function_declaration"
+            || k == "method_definition"
+            || k == "function_definition"
+        {
+            if let Some(name_node) = n.child_by_field_name("name") {
+                if let Ok(text) = name_node.utf8_text(source_code) {
+                    enclosing_name = text.to_string();
+                    if file_path.ends_with(".rs") {
+                        if let Some(impl_item) = n.parent().and_then(|p| p.parent()) {
+                            if impl_item.kind() == "impl_item" {
+                                if let Some(type_node) = impl_item.child_by_field_name("type") {
+                                    if let Ok(struct_name) = type_node.utf8_text(source_code) {
+                                        enclosing_name = format!("{struct_name}::{enclosing_name}");
+                                    }
+                                }
+                            }
+                        }
+                    } else if file_path.ends_with(".rb") {
+                        if let Ok(ns) = get_ruby_namespace(n, source_code) {
+                            if !ns.is_empty() {
+                                enclosing_name = format!("{ns}::{enclosing_name}");
+                            }
+                        }
+                    } else if file_path.ends_with(".py") {
+                        if let Ok(ns) = get_python_namespace(n, source_code) {
+                            if !ns.is_empty() {
+                                enclosing_name = format!("{ns}::{enclosing_name}");
+                            }
+                        }
+                    } else if file_path.ends_with(".go") {
+                        if let Ok(ns) = get_go_namespace(n, source_code) {
+                            if !ns.is_empty() {
+                                enclosing_name = format!("{ns}::{enclosing_name}");
+                            }
+                        }
+                    } else if let Ok(ns) = get_ts_namespace(n, source_code) {
+                        if !ns.is_empty() {
+                            enclosing_name = format!("{ns}::{enclosing_name}");
+                        }
+                    }
+                    break;
+                }
+            }
+        } else if k == "struct_item"
+            || k == "class_definition"
+            || k == "type_declaration"
+            || k == "class_declaration"
+            || k == "interface_declaration"
+            || k == "class"
+            || k == "module"
+        {
+            if let Some(name_node) = n.child_by_field_name("name") {
+                if let Ok(text) = name_node.utf8_text(source_code) {
+                    enclosing_name = text.to_string();
+                    if file_path.ends_with(".rb") {
+                        if let Ok(ns) = get_ruby_namespace(n, source_code) {
+                            enclosing_name = ns;
+                        }
+                    } else if file_path.ends_with(".py") {
+                        if let Ok(ns) = get_python_namespace(n, source_code) {
+                            enclosing_name = ns;
+                        }
+                    } else if file_path.ends_with(".ts") || file_path.ends_with(".tsx") || file_path.ends_with(".js") || file_path.ends_with(".jsx") {
+                        if let Ok(ns) = get_ts_namespace(n, source_code) {
+                            enclosing_name = ns;
+                        }
+                    } else if file_path.ends_with(".go") {
+                        // Already got the name
+                    }
+                    break;
+                }
+            }
+        }
+        curr = n.parent();
+    }
+
+    if enclosing_name.is_empty() {
+        return Ok(());
+    }
+
+    let source_id = format!("{file_path}::{enclosing_name}");
+    
+    // Extract nested types
+    let type_ids = extract_identifiers(target_node, source_code, &["type_identifier", "identifier", "type_name", "type"]);
+    let line = depends_node.start_position().row + 1;
+
+    for target_text in type_ids {
+        if target_text.is_empty() { continue; }
+        // Very rough filter: types often start with capital letters in many languages
+        // But let's keep it broad, the reconciler will only link if it finds a match.
+        
+        let target_id = format!("{file_path}::unresolved_depends_{line}_{target_text}");
+
+        let mut props = HashMap::new();
+        props.insert("name".to_string(), target_text.clone());
+        props.insert("kind".to_string(), "unresolved_symbol".to_string());
+        props.insert("file".to_string(), file_path.to_string());
+        props.insert("line".to_string(), line.to_string());
+        bulk_nodes.push((target_id.clone(), props, "Unresolved".to_string()));
+
+        bulk_edges.push((source_id.clone(), target_id, HashMap::new(), "DEPENDS_ON".to_string()));
+    }
+
+    Ok(())
+}
+
 fn get_file_metadata_properties(file_path: &str) -> HashMap<String, String> {
     let mut file_props = HashMap::new();
     file_props.insert("name".to_string(), file_path.to_string());
@@ -748,7 +896,7 @@ pub fn parse_file(file_path: &str, conn: &lbug::Connection) -> Result<FileSummar
             let name = props.get("name").cloned().unwrap_or_default();
             let signature = props.get("signature").cloned().unwrap_or_default();
             let docstring = props.get("docstring").cloned().unwrap_or_default();
-            let kind = label.clone();
+            let kind = props.get("kind").cloned().unwrap_or_else(|| label.clone());
             let start_line = props
                 .get("start_line")
                 .and_then(|v| v.parse::<i64>().ok())
@@ -795,7 +943,11 @@ pub fn parse_file(file_path: &str, conn: &lbug::Connection) -> Result<FileSummar
         let rel_table = match label.as_str() {
             "CONTAINS" => "CONTAINS",
             "DEFINES" => "DEFINES",
-            "CALLS" | _ => "CALLS",
+            "DEPENDS_ON" => "DEPENDS_ON",
+            "INHERITS" => "INHERITS",
+            "INSTANTIATES" => "INSTANTIATES",
+            "IMPORTS" => "IMPORTS",
+            _ => "CALLS",
         };
 
         let query = format!(
@@ -899,6 +1051,16 @@ pub fn parse_file_in_memory(
         } else if let Some(&inherits_node) = capture_map.get("inherits.node") {
             process_inherits_node(
                 inherits_node,
+                &capture_map,
+                file_path,
+                source_code.as_bytes(),
+                &mut bulk_nodes,
+                &mut bulk_edges,
+            )?;
+            vec![]
+        } else if let Some(&depends_node) = capture_map.get("depends.node") {
+            process_depends_node(
+                depends_node,
                 &capture_map,
                 file_path,
                 source_code.as_bytes(),

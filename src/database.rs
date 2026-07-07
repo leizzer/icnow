@@ -75,7 +75,7 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
         is_fresh = true;
     }
 
-    let cfg = SystemConfig::default().buffer_pool_size(128 * 1024 * 1024); // 128 MB to avoid OOM in concurrent tests
+    let cfg = SystemConfig::default().buffer_pool_size(1024 * 1024 * 1024); // 1GB buffer pool
     let db_result = Database::new(&path_str, cfg.clone());
 
     let db = match db_result {
@@ -111,7 +111,7 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
                 let wal_path = format!("{path_str}.wal");
                 let _ = std::fs::remove_file(&wal_path);
                 is_fresh = true;
-                Database::new(&path_str, SystemConfig::default())
+                Database::new(&path_str, cfg.clone())
                     .map_err(|e2| format!("Failed to open DB after wiping: {e2}"))?
             } else {
                 return Err(format!("Failed to open DB: {e}"));
@@ -162,6 +162,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         "CREATE REL TABLE IF NOT EXISTS INSTANTIATES (FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File)",
         "CREATE REL TABLE IF NOT EXISTS REFERENCES (FROM Memory TO Memory, FROM Memory TO Symbol, FROM Memory TO File, FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File, FROM File TO Memory, FROM Symbol TO Memory)",
         "CREATE REL TABLE IF NOT EXISTS IMPORTS (FROM File TO File, FROM File TO Symbol, FROM Symbol TO File, FROM Symbol TO Symbol)",
+        "CREATE REL TABLE IF NOT EXISTS DEPENDS_ON (FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File)",
     ];
     for table in rel_tables {
         let _ = conn.query(table); // Ignore errors

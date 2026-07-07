@@ -731,7 +731,16 @@ pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize
     crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
     // Now trigger import reconciliation explicitly
     if let Err(e) = crate::indexer::reconciler::reconcile_imports(db_path) {
-        tracing::error!("Failed to reconcile imports during deep scan: {}", e);
+        tracing::error!("Import reconciliation failed: {e}");
+    }
+    
+    // Attempt to resolve any remaining unresolved symbols globally
+    let conn = match crate::open_db_connection(db_path) {
+        Ok(c) => c,
+        Err(e) => return Err(anyhow::anyhow!(e)),
+    };
+    if let Err(e) = crate::indexer::reconciler::reconcile_unresolved_symbols(&conn) {
+        tracing::error!("Global unresolved symbols reconciliation failed: {e}");
     }
 
     Ok((files_scanned, 0))

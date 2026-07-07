@@ -222,6 +222,16 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
         if let Err(e) = crate::indexer::reconciler::reconcile_imports(&db_path_clone) {
             tracing::error!("Import reconciliation failed: {}", e);
         }
+        let conn = match crate::open_db_connection(&db_path_clone) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to open db for unresolved symbol resolution: {}", e);
+                return;
+            }
+        };
+        if let Err(e) = crate::indexer::reconciler::reconcile_unresolved_symbols(&conn) {
+            tracing::error!("Global unresolved symbols reconciliation failed: {}", e);
+        }
     });
 
     Ok(())

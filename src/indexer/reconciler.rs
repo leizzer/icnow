@@ -198,6 +198,18 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
             target_file.replace("'", "''")
         );
         let _ = conn.query(&resolve_inst_query);
+
+        // Advanced Import Resolution: Resolve floating dependencies
+        let resolve_depends_query = format!(
+            "MATCH (caller)-[:DEPENDS_ON]->(u:Symbol {{kind: 'unresolved_symbol', name: '{}', file: '{}'}}), (t:Symbol {{name: '{}', file: '{}'}}) \
+             MERGE (caller)-[:DEPENDS_ON]->(t) \
+             DETACH DELETE u",
+            sym_name.replace("'", "''"),
+            src.replace("'", "''"),
+            sym_name.replace("'", "''"),
+            target_file.replace("'", "''")
+        );
+        let _ = conn.query(&resolve_depends_query);
     }
 
     for i_id in to_delete {
@@ -211,5 +223,100 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
         "Import reconciliation complete. Created {} IMPORTS edges.",
         created_count
     );
+    Ok(())
+}
+
+
+pub fn reconcile_unresolved_symbols(conn: &lbug::Connection) -> Result<()> {
+    tracing::info!("Starting global resolution for unresolved symbols...");
+
+    // Find all unresolved symbols
+    let query = "MATCH (u:Symbol {kind: 'unresolved_symbol'}) RETURN u.id, u.name, u.file";
+    let mut res = match conn.query(query) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Failed to fetch unresolved symbols: {}", e);
+            return Err(anyhow::anyhow!(e));
+        }
+    };
+
+    let cols = res.get_column_names();
+    let mut unresolved_rows = Vec::new();
+    for row in res.by_ref() {
+        if let (Some(u_id), Some(u_name), Some(u_file)) = (
+            crate::indexer::reconciler::get_str_val(&row, &cols, "u.id"),
+            crate::indexer::reconciler::get_str_val(&row, &cols, "u.name"),
+            crate::indexer::reconciler::get_str_val(&row, &cols, "u.file"),
+        ) {
+            unresolved_rows.push((u_id, u_name, u_file));
+        }
+    }
+
+    if unresolved_rows.is_empty() {
+        return Ok(());
+    }
+
+    // Map symbol names to all known definition nodes
+    let mut symbol_defs = std::collections::HashMap::new();
+    if let Ok(mut defs_res) = conn.query("MATCH (s:Symbol) WHERE s.kind <> 'unresolved_symbol' RETURN s.id, s.name, s.file") {
+        let def_cols = defs_res.get_column_names();
+        for row in defs_res.by_ref() {
+            if let (Some(s_id), Some(s_name), Some(s_file)) = (
+                crate::indexer::reconciler::get_str_val(&row, &def_cols, "s.id"),
+                crate::indexer::reconciler::get_str_val(&row, &def_cols, "s.name"),
+                crate::indexer::reconciler::get_str_val(&row, &def_cols, "s.file"),
+            ) {
+                // Ignore method names that contain '::' or '.' as the exact match usually works on the base name
+                let base_name = if s_name.contains("::") {
+                    s_name.split("::").last().unwrap_or(&s_name).to_string()
+                } else if s_name.contains('.') {
+                    s_name.split('.').last().unwrap_or(&s_name).to_string()
+                } else {
+                    s_name.clone()
+                };
+                symbol_defs.entry(base_name).or_insert_with(Vec::new).push((s_id, s_file));
+            }
+        }
+    }
+
+    let mut resolved_count = 0;
+    for (u_id, u_name, u_file) in unresolved_rows {
+        if let Some(matches) = symbol_defs.get(&u_name) {
+            let mut best_match = None;
+            
+            // Prefer matches in the exact same file
+            for (s_id, s_file) in matches {
+                if *s_file == u_file {
+                    best_match = Some(s_id.clone());
+                    break;
+                }
+            }
+            
+            // Or prefer single unique match globally
+            if best_match.is_none() && matches.len() == 1 {
+                best_match = Some(matches[0].0.clone());
+            }
+
+            if let Some(target_id) = best_match {
+                // Re-wire CALLS, INSTANTIATES, DEPENDS_ON, INHERITS edges
+                for edge_type in &["CALLS", "INSTANTIATES", "DEPENDS_ON", "INHERITS"] {
+                    let rewire_query = format!(
+                        "MATCH (caller)-[:{edge_type}]->(u:Symbol {{id: '{}'}}), (t:Symbol {{id: '{}'}})                          MERGE (caller)-[:{edge_type}]->(t)",
+                        u_id.replace("'", "''"),
+                        target_id.replace("'", "''")
+                    );
+                    let _ = conn.query(&rewire_query);
+                }
+                
+                // Delete the unresolved node
+                let delete_query = format!("MATCH (u:Symbol {{id: '{}'}}) DETACH DELETE u", u_id.replace("'", "''"));
+                let _ = conn.query(&delete_query);
+                
+                resolved_count += 1;
+            }
+        }
+    }
+
+    tracing::info!("Global unresolved symbol resolution complete. Resolved {} symbols.", resolved_count);
     Ok(())
 }

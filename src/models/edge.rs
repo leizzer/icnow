@@ -23,21 +23,16 @@ pub struct Edge {
     )]
     pub properties: HashMap<String, String>,
 }
-fn get_node_label(conn: &Connection, id: &str) -> Option<String> {
-    for label in &["File", "Symbol", "Memory"] {
-        let q = format!(
-            "MATCH (n:{} {{id: '{}'}}) RETURN n.id LIMIT 1",
-            label,
-            escape_cypher_string(id)
-        );
-        if let Ok(mut res) = conn.query(&q) {
-            if res.by_ref().next().is_some() {
-                return Some(label.to_string());
-            }
-        }
+fn infer_node_label(id: &str) -> String {
+    if id.starts_with("memory::") {
+        "Memory".to_string()
+    } else if id.starts_with('/') && !id.contains("::") {
+        "File".to_string()
+    } else {
+        "Symbol".to_string()
     }
-    None
 }
+
 impl Edge {
     pub fn save(&self, conn: &Connection) -> anyhow::Result<()> {
         let rel_table = match self.label.as_str() {
@@ -47,29 +42,13 @@ impl Edge {
             "INHERITS" => "INHERITS",
             "INSTANTIATES" => "INSTANTIATES",
             "IMPORTS" => "IMPORTS",
+            "DEPENDS_ON" => "DEPENDS_ON",
             "REFERENCES" => "REFERENCES",
             _ => "CALLS",
         };
 
-        let src_label = get_node_label(conn, &self.source).unwrap_or_else(|| {
-            if self.source.starts_with("memory::") {
-                "Memory".to_string()
-            } else if self.source.starts_with('/') && !self.source.contains("::") {
-                "File".to_string()
-            } else {
-                "Symbol".to_string()
-            }
-        });
-
-        let tgt_label = get_node_label(conn, &self.target).unwrap_or_else(|| {
-            if self.target.starts_with("memory::") {
-                "Memory".to_string()
-            } else if self.target.starts_with('/') && !self.target.contains("::") {
-                "File".to_string()
-            } else {
-                "Symbol".to_string()
-            }
-        });
+        let src_label = infer_node_label(&self.source);
+        let tgt_label = infer_node_label(&self.target);
 
         let query = format!(
             "MATCH (s:{} {{id: '{}'}}), (t:{} {{id: '{}'}}) MERGE (s)-[:{}]->(t)",
