@@ -23,8 +23,13 @@ pub static EMBEDDING_MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
 pub fn get_embedding_model() -> &'static Mutex<TextEmbedding> {
     EMBEDDING_MODEL.get_or_init(|| {
         tracing::info!("Initializing fastembed model (downloads if not present)...");
+        let mut cache_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+        cache_dir.push(".icnow");
+        cache_dir.push(".fastembed_cache");
+
         let options = fastembed::InitOptions::new(fastembed::EmbeddingModel::AllMiniLML6V2)
-            .with_show_download_progress(true);
+            .with_show_download_progress(true)
+            .with_cache_dir(cache_dir);
         Mutex::new(TextEmbedding::try_new(options).expect("Failed to initialize embedding model"))
     })
 }
