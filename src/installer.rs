@@ -253,6 +253,58 @@ To effectively navigate this codebase, use the `icnow` MCP server (if supported 
 pub fn run_uninstall() -> Result<()> {
     let home = dirs::home_dir().context("Could not determine home directory")?;
 
+    // Remove the icnow binary from ~/.local/bin
+    let bin_path = home.join(".local/bin/icnow");
+    if bin_path.exists() {
+        println!("Removing binary: {}", bin_path.display());
+        if let Err(e) = std::fs::remove_file(&bin_path) {
+            eprintln!("Failed to remove {}: {}", bin_path.display(), e);
+        } else {
+            println!("Successfully removed {}", bin_path.display());
+        }
+    } else {
+        println!("No binary found at {}", bin_path.display());
+    }
+
+    // macOS: remove /etc/paths.d/icnow
+    if cfg!(target_os = "macos") {
+        let paths_d = std::path::Path::new("/etc/paths.d/icnow");
+        if paths_d.exists() {
+            println!("Removing /etc/paths.d/icnow (requires sudo)...");
+            let status = Command::new("sudo").arg("rm").arg("/etc/paths.d/icnow").status();
+            match status {
+                Ok(s) if s.success() => println!("Successfully removed /etc/paths.d/icnow"),
+                _ => eprintln!("⚠ Could not remove /etc/paths.d/icnow. You may need to run: sudo rm /etc/paths.d/icnow"),
+            }
+        } else {
+            println!("No /etc/paths.d/icnow found.");
+        }
+    }
+
+    // Linux: remove the PATH export from ~/.profile
+    if cfg!(target_os = "linux") {
+        let profile = home.join(".profile");
+        if profile.exists() {
+            if let Ok(content) = std::fs::read_to_string(&profile) {
+                let local_bin = home.join(".local/bin").to_string_lossy().to_string();
+                let cleaned: String = content
+                    .lines()
+                    .filter(|l| !(l.contains(&local_bin) && l.contains("icnow installer")))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if cleaned != content {
+                    if let Err(e) = std::fs::write(&profile, cleaned) {
+                        eprintln!("⚠ Could not clean ~/.profile: {e}");
+                    } else {
+                        println!("Removed icnow PATH entry from ~/.profile");
+                    }
+                } else {
+                    println!("No icnow entry found in ~/.profile");
+                }
+            }
+        }
+    }
+
     // Remove the ~/.icnow directory
     let icnow_dir = home.join(".icnow");
     if icnow_dir.exists() {
