@@ -39,9 +39,45 @@ However, do **NOT** stubbornly force pure Cypher string-slicing if you just need
 2. **Read it via Terminal**: If you need to read the full file body, use the traditional native tool `view_file` on the exact path found by `icnow`.
 
 ### 🏆 Benchmark Proven:
-- **✅ WINS for structural queries (95% token savings):** Locating files, finding all callers/callees via `get_symbol_info`, counting methods, tracing dependencies.
+- **✅ WINS for structural queries (91%+ token savings):** Locating files, finding all callers/callees via `get_symbol_info`, counting methods, tracing dependencies.
 - **❌ LOSES for pure text extraction:** Forcing Cypher to extract multi-line methods is brittle. Once you know the path, just use `view_file` or `get_symbol_implementation`.
 - **❌ LOSES for simple exact string matches:** Do not use `icnow` for raw string pattern matching (e.g., finding the string `"TODO"`). Use `grep_search`.
+
+### 💸 The Recurring Token Cost — Why This Matters More Than You Think
+
+**Every LLM API call sends your entire context window to the model on every single turn.** A file read with `view_file` or `cat` doesn't just cost tokens once — those characters stay in context and are **re-sent and re-billed on every subsequent message** for the rest of the session.
+
+| Approach | Tokens on first read | Tokens per follow-up turn | Total over 10 turns |
+|---|---|---|---|
+| `view_file` (full file) | ~2,000 | +2,000 every turn | **~22,000 tokens** |
+| `icnow search_symbols` | ~200 | +200 every turn | **~2,200 tokens** |
+
+**This is a 10× difference in total session cost.** The longer a session goes on, the more it compounds. **Always prefer `icnow` for navigation and structure — save `view_file` for when you truly need the full implementation body.**
+
+### 🗺️ Quick Decision Tree: When to Use What
+
+```
+Need to find WHERE something is defined?
+  → icnow: search_symbols
+
+Need to understand all callers/callees of a function?
+  → icnow: get_symbol_info
+
+Need the full implementation body?
+  → icnow: get_symbol_implementation  (or view_file as fallback)
+
+Need to trace a multi-hop call chain?
+  → icnow: trace_call_path
+
+Need to list all methods/classes in a file?
+  → icnow: get_file_structure
+
+Need to find a raw string/pattern in code?
+  → grep_search  (icnow doesn't help here)
+
+Need to read a config file or non-code file?
+  → view_file  (icnow doesn't index these)
+```
 
 ### ⚠️ CRITICAL EXECUTION RULES:
 - **DO NOT RUN MCP TOOLS IN BASH**: Never attempt to run tools like `search_memories` or `search_symbols` inside a terminal/Bash command. They are native tool calls.
