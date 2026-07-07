@@ -1,6 +1,6 @@
 [package]
 name = "icnow"
-version = "0.1.64"
+version = "0.1.65"
 edition = "2024"
 repository = "https://github.com/leizzer/icnow"
 
@@ -48,3 +48,4 @@ pr-run-mode = "plan"
 allow-dirty = ["ci"]
 windows-archive = ".tar.gz"
 unix-archive = ".tar.gz"
+install-path = "~/.local/bin"
