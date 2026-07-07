@@ -82,6 +82,7 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
         Ok(db) => db,
         Err(e) => {
             let err_msg = e.to_string();
+            let err_msg_lower = err_msg.to_lowercase();
             if err_msg.contains("Could not set lock on file")
                 || err_msg.contains("IO exception: Could not set lock")
             {
@@ -92,7 +93,8 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
                 let mut ro_res = Database::new(&path_str, ro_config.clone());
                 for _ in 0..3 {
                     if let Err(ro_err) = &ro_res {
-                        if ro_err.to_string().contains("Corrupted wal file") {
+                        let ro_err_lower = ro_err.to_string().to_lowercase();
+                        if ro_err_lower.contains("corrupt") || ro_err_lower.contains("checksum") {
                             tracing::warn!("Read-only open hit WAL corruption, retrying...");
                             std::thread::sleep(std::time::Duration::from_millis(150));
                             ro_res = Database::new(&path_str, ro_config.clone());
@@ -102,14 +104,12 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
                     break;
                 }
                 ro_res.map_err(|e2| format!("Failed to open DB in read-only mode: {e2}"))?
-            } else if err_msg.contains("Corrupted wal file") {
+            } else if err_msg_lower.contains("corrupt") || err_msg_lower.contains("checksum") {
                 tracing::warn!(
                     "Corrupted WAL file detected at {}. Wiping and reinitializing...",
                     path_str
                 );
-                let _ = std::fs::remove_file(&path_str);
-                let wal_path = format!("{path_str}.wal");
-                let _ = std::fs::remove_file(&wal_path);
+                let _ = std::fs::remove_dir_all(&path_str);
                 is_fresh = true;
                 Database::new(&path_str, cfg.clone())
                     .map_err(|e2| format!("Failed to open DB after wiping: {e2}"))?
