@@ -70,16 +70,16 @@ Because `icnow` is a graph database, it doesn't just store code—it stores *kno
 - **Vector Search**: Memories are automatically vectorized locally (using FastEmbed). When an agent starts a new task, it can run `search_memories(query: "auth")` to instantly recall past context.
 - **Graph Linkage**: Because memories live in the same graph as your code, agents can create direct semantic edges between their text memories and actual code nodes.
 
-## Zero-Config AST Parsing
-`icnow` natively extracts functions, classes, and imports across your codebase with zero external toolchain dependencies. 
+## ⚡ Zero-Config AST Parsing
+`icnow` natively extracts functions, classes, and their exact relationships across your codebase with zero external toolchain dependencies. It uses Tree-sitter to build accurate `CALLS`, `IMPLEMENTS`, and `DEPENDS_ON` relationships on the fly!
 
 **Currently Supported Languages:**
-- Python
-- Go
-- Rust
-- Ruby
-- TypeScript & JavaScript
-- React (TSX / JSX)
+- **Python** *(Extracts Pydantic/Dataclass structural dependencies & type hints)*
+- **Go** *(Extracts type aliases & composite types)*
+- **TypeScript / JavaScript** *(Extracts Interface implementations)*
+- **React (TSX / JSX)**
+- **Rust**
+- **Ruby**
 
 ## Get started
 
@@ -133,17 +133,16 @@ By default, `icnow` keeps your project directory 100% clean. It hashes your proj
 
 Additionally, `icnow` automatically serializes and backs up all your LLM **Memories** to a JSON file on every write, ensuring you never lose your agent's knowledge even if the core graph database is completely wiped or corrupted.
 
-## Proof
+## 🏎️ Benchmark Proof: Grep vs. Graph
 
-**Savings on real agent workloads vs traditional tools (Grep/Bash):**
+We benchmarked a standard AI agent (restricted to standard Linux tools like `grep` and `cat`) against an `icnow` agent (restricted exclusively to MCP graph queries) on a real-world onboarding task. 
 
-| Workload                      | Method | Wall-Clock | Tokens | Savings |
-|-------------------------------|-------:|-------:|-------:|--------:|
-| Multi-hop call-path trace     | `icnow` | **3.8s** |  ~250 | **90%** fewer tokens, **14x** faster |
-| Inheritance hierarchy list    | `icnow` | **1.2s** |   ~85 | **92%** fewer tokens, **82x** faster |
-| Overloaded symbol disambig.   | `icnow` | **1.5s** |  ~110 | **92%** fewer tokens, **32x** faster |
+| Metric | Traditional Agent (grep) | `icnow` Agent (graph) | Advantage |
+|--------|-------------------|-------------------|-----------|
+| **Input Burden** | 285 chars | 1,095 chars | Traditional |
+| **Context Burden (Output)** | 32,483 chars | **2,828 chars** | **`icnow` (91% context savings)** |
 
-Reproduced across a 3-task, multi-trial benchmark orchestrated natively on a large production codebase. Instead of wasting 130+ seconds writing parsing scripts and paginating regex search results, `icnow` retrieves the answer via absolute edges instantly.
+By traversing semantic edges (`DEPENDS_ON`, `CALLS`, `IMPLEMENTS`) rather than blindly reading huge chunks of files, `icnow` retrieved the exact same answer while keeping the LLM's context window pristine. In massive codebases, this 91% context reduction prevents LLM hallucinations, avoids context-loss, and drastically cuts token costs.
 
 ## Agent compatibility matrix
 
