@@ -25,7 +25,7 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
             "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
         );
     }
-    let limit = req.limit.unwrap_or(50);
+
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
 
     let query_param = req.query.replace("'", "''");
@@ -47,19 +47,66 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
         }
     }
 
-    q.push_str(&format!(" RETURN n.id AS id, n.kind AS label, n.signature AS signature, n.docstring AS docstring LIMIT {limit}"));
+    let limit_clause = if let Some(limit) = req.limit {
+        format!(" LIMIT {limit}")
+    } else {
+        String::new()
+    };
+
+    q.push_str(&format!(" RETURN DISTINCT n.id AS id, n.kind AS label, n.signature AS signature, n.docstring AS docstring{limit_clause}"));
 
     let mut res = conn
         .query(&q)
         .map_err(|e| format!("Failed to search symbols: {e}"))?;
-    let result_str = crate::tools::format_cypher_result(&mut res)?;
 
-    if result_str.trim() == "| id | label | signature | docstring |\n| --- | --- | --- | --- |" {
+    let cols = res.get_column_names();
+    if cols.is_empty() {
+        return Ok("No columns returned.".to_string());
+    }
+
+    let mut out = format!("| {} |\n", cols.join(" | "));
+    out.push_str(&format!(
+        "| {} |\n",
+        cols.iter().map(|_| "---").collect::<Vec<_>>().join(" | ")
+    ));
+
+    let mut seen = std::collections::HashSet::new();
+    let mut row_count = 0;
+
+    for row in res.by_ref() {
+        let mut row_vals = Vec::new();
+        for (i, _col) in cols.iter().enumerate() {
+            let val_str = match &row[i] {
+                lbug::Value::String(s) => s.clone(),
+                lbug::Value::Int64(i) => i.to_string(),
+                lbug::Value::Int32(i) => i.to_string(),
+                lbug::Value::Double(f) => f.to_string(),
+                lbug::Value::Bool(b) => b.to_string(),
+                lbug::Value::Null(_) => "null".to_string(),
+                _ => "?".to_string(),
+            };
+            row_vals.push(val_str);
+        }
+
+        // Deduplicate based on file_path (from id), label, and signature
+        let id = &row_vals[0];
+        let file_path = id.split("::").next().unwrap_or(id);
+        let label = &row_vals[1];
+        let signature = &row_vals[2];
+        let dedup_key = format!("{}|{}|{}", file_path, label, signature);
+
+        if seen.insert(dedup_key) {
+            out.push_str(&format!("| {} |\n", row_vals.join(" | ")));
+            row_count += 1;
+        }
+    }
+
+    if row_count == 0 {
         return Ok(format!(
-            "{result_str}\n\nNo matches found. Hint: The target files might not be indexed yet or might be stale. Use the 'coverage_check' tool to verify if the relevant directories are in the graph."
+            "{out}\nNo matches found. Hint: The target files might not be indexed yet or might be stale. Use the 'coverage_check' tool to verify if the relevant directories are in the graph."
         ));
     }
-    Ok(result_str)
+    Ok(out)
 }
 
 pub fn handle_get_file_structure(
