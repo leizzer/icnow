@@ -264,4 +264,9 @@ pub struct ListMemoriesRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GetVersionRequest {}
+pub struct GetVersionRequest {
+    #[schemars(
+        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
+    )]
+    pub project_root: Option<String>,
+}

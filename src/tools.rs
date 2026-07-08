@@ -529,9 +529,16 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
         .await
     }
 
-    #[tool(description = "Returns the current version of the icnow MCP server.")]
-    fn get_version(&self, _req: Parameters<GetVersionRequest>) -> Result<String, String> {
-        Ok(env!("CARGO_PKG_VERSION").to_string())
+    #[tool(description = "Returns the current version of the icnow MCP server and the active database path.")]
+    fn get_version(&self, req: Parameters<GetVersionRequest>) -> Result<String, String> {
+        let db_path =
+            self.resolve_db_path_and_watch(req.0.project_root.as_deref(), None, None);
+        let version = env!("CARGO_PKG_VERSION").to_string();
+        let res = serde_json::json!({
+            "version": version,
+            "db_path": db_path
+        });
+        Ok(res.to_string())
     }
 
     #[tool(
