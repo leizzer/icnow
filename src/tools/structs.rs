@@ -73,6 +73,14 @@ pub struct SearchSymbolsRequest {
         description = "Optional list of node labels to filter the results (e.g., ['Class', 'Method'])."
     )]
     pub kind_filter: Option<Vec<String>>,
+    #[schemars(
+        description = "If true, returns detailed information including docstrings. Defaults to false (pointer mode)."
+    )]
+    pub detailed: Option<bool>,
+    #[schemars(
+        description = "If true, only returns definition nodes (e.g. classes, functions, structs) and excludes imports/exports. Defaults to true."
+    )]
+    pub definitions_only: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -193,6 +201,14 @@ pub struct DeepScanRequest {
         description = "Optional path to a pre-generated LSIF dump file. If omitted, icnow will attempt to auto-generate the LSIF dump based on project detection."
     )]
     pub lsif_path: Option<String>,
+    #[schemars(
+        description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
+    )]
+    pub project_root: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetDeepScanStatusRequest {
     #[schemars(
         description = "Optional absolute path to the project root directory. If not specified, defaults to the server's current working directory."
     )]

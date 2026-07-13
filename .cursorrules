@@ -69,7 +69,7 @@ mcp__icnow__generate_interactive_map(output_path: "architecture.html", filter_pa
 mcp__icnow__list_indexed_files()
 ```
 
-**`mcp__icnow__query_graph_cypher`** - Executes a graph query using Cypher syntax. **Prefer this over SQL** for high-level semantic lookups and pattern matching.
+**`mcp__icnow__query_graph_cypher`** - Executes a graph query using Cypher syntax for high-level semantic lookups and pattern matching.
 ```cypher
 MATCH (c:Class {name: "User"})-[:DEFINES]->(m:Method) RETURN m.name ORDER BY m.name
 ```

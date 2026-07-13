@@ -5,7 +5,7 @@ description: "USE THIS SKILL FIRST before any codebase navigation, symbol lookup
 
 # `icnow` Semantic Graph Skill: The Masterclass
 
-Welcome to the `icnow` documentation. This tool interfaces with a high-performance **Kuzu Graph Database** (`knowledge.db`) to give you semantic, structurally aware access to the codebase.
+Welcome to the `icnow` documentation. This tool interfaces with a high-performance **LadybugDB Graph Database** (`knowledge.db`) to give you semantic, structurally aware access to the codebase.
 
 By using `icnow`, you can navigate massive projects with **95% fewer tokens** and **100% higher accuracy** than recursive grepping. You are no longer flying blind—you have a map.
 
@@ -133,7 +133,7 @@ When using `query_graph_cypher`, remember that nodes are either `Symbol` or `Fil
 
 **Example 1: Count all methods inside a specific file**
 ```cypher
-MATCH (f:File {id: '/Users/path/to/app/models/user.rb'})-[:CONTAINS]->(m:Symbol {kind: 'Method'})
+MATCH (f:File {id: 'app/models/user.rb'})-[:CONTAINS]->(m:Symbol {kind: 'Method'})
 RETURN count(m)
 ```
 
@@ -153,8 +153,10 @@ RETURN f.id
 
 ## 🛠️ 7. The Tool Arsenal
 
-1.  **`search_symbols(query: String, limit: Option<u32>, kind_filter: Option<Vec<String>>)`**  
-    Searches the graph for nodes matching a symbol name. Use `kind_filter: ["Class"]` or `["Method"]` to reduce noise. Artificial unresolved nodes are filtered out automatically.
+**Note on Paths and Output:** All tools now support relative paths (e.g., `src/main.rs`) for node IDs and file paths. The system handles conversion to absolute paths internally. Tool outputs are typically returned as JSON arrays rather than Markdown tables for easier programmatic parsing.
+
+1.  **`search_symbols(query: String, limit: Option<u32>, kind_filter: Option<Vec<String>>, detailed: Option<bool>, definitions_only: Option<bool>)`**  
+    Searches the graph for nodes matching a symbol name. Defaults to a concise "pointer mode" (returning file path, start, and end line). Set `detailed: true` to include docstrings. Defaults to returning primary definitions only (`definitions_only: true`), discarding duplicate imports/references. Artificial unresolved nodes are filtered out automatically.
 2.  **`get_symbol_info(node_id: String)`** 🌟 **HIGHLY RECOMMENDED** 🌟 
     Returns complete 360-degree context for a single node ID. Includes incoming usages (with file:line accuracy) and outgoing dependencies.
 3.  **`coverage_check(directory_path: String, project_root: Option<String>)`**
@@ -166,14 +168,18 @@ RETURN f.id
 6.  **`parse_project_file(file_path: String)`**  
     Parses a file and adds it to the graph. Only call if `coverage_check` shows it is missing or out-of-date.
 7.  **`query_graph_cypher(query: String)`**  
-    Executes a Kuzu Graph query using Cypher syntax (SQLite is NOT supported). Use this for custom aggregations (e.g., `MATCH (m:Symbol {kind: 'Method'}) RETURN count(m)`).
+    Executes a LadybugDB Graph query using Cypher syntax (SQLite is NOT supported). Use this for custom aggregations (e.g., `MATCH (m:Symbol {kind: 'Method'}) RETURN count(m)`).
 8.  **`trace_call_path(start_node_id: String, end_node_id: String)`**  
     Traces multi-hop call paths between a specific start and end node.
 9.  **`generate_interactive_map(output_path: String, filter_path: Option<String>)`**  
     Generates a standalone, interactive HTML Cytoscape map for visual representations.
 10. **`list_indexed_files()`**  
     Lists all files tracked in the knowledge graph.
-11. **`save_memory(id: String, name: String, description: String, keywords: Vec<String>, links: Vec<String>, link_type: Option<String>, project_root: Option<String>)`**  
+11. **`deep_scan(project_root: String, lsif_path: Option<String>)`**
+    Offloads a comprehensive background scan of the entire project to populate the graph database.
+12. **`get_deep_scan_status(project_root: String)`**
+    Returns the current progress of a background deep scan operation (e.g. percentage of nodes imported).
+13. **`save_memory(id: String, name: String, description: String, keywords: Vec<String>, links: Vec<String>, link_type: Option<String>, project_root: Option<String>)`**  
     Saves a high-level concept memory node. 
 12. **`get_memory(id: String, project_root: Option<String>)`**  
     Retrieves the properties of a specific memory node along with all its direct links.

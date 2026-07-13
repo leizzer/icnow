@@ -681,6 +681,10 @@ fn map_symbols_to_graph(
 struct ImportState {
     nodes_imported: usize,
     edges_imported: usize,
+    total_nodes: Option<usize>,
+    total_edges: Option<usize>,
+    files_scanned: Option<usize>,
+    total_files: Option<usize>,
 }
 
 pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize, usize)> {
@@ -693,7 +697,13 @@ pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize
     }
     let conn = conn_res.unwrap();
 
-    let mut files_scanned = 0;
+    let state_file = std::path::Path::new(db_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join(".icnow_import_state.json");
+    let mut state = ImportState::default();
+
+    let mut target_files = Vec::new();
     for entry in WalkDir::new(project_root)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -719,14 +729,28 @@ pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize
                         && !path_str.contains("/.venv/")
                         && !path_str.contains("/vendor/")
                     {
-                        if let Ok(_) = crate::indexer::parser::parse_file(&path_str, &conn) {
-                            files_scanned += 1;
-                        }
+                        target_files.push(path_str);
                     }
                 }
             }
         }
     }
+
+    state.total_files = Some(target_files.len());
+    state.files_scanned = Some(0);
+    let _ = std::fs::write(&state_file, serde_json::to_string(&state).unwrap_or_default());
+
+    let mut files_scanned = 0;
+    for path_str in target_files {
+        if let Ok(_) = crate::indexer::parser::parse_file(&path_str, &conn) {
+            files_scanned += 1;
+            state.files_scanned = Some(files_scanned);
+            if files_scanned % 10 == 0 {
+                let _ = std::fs::write(&state_file, serde_json::to_string(&state).unwrap_or_default());
+            }
+        }
+    }
+    let _ = std::fs::write(&state_file, serde_json::to_string(&state).unwrap_or_default());
 
     crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
     // Now trigger import reconciliation explicitly
@@ -788,6 +812,10 @@ pub fn parse_and_import_lsif(
             );
         }
     }
+
+    state.total_nodes = Some(nodes_count);
+    state.total_edges = Some(edges_count);
+    let _ = std::fs::write(&state_file, serde_json::to_string(&state).unwrap_or_default());
 
     if !all_nodes.is_empty() {
         tracing::info!(

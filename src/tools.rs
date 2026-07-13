@@ -404,7 +404,7 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Returns documentation about the graph schema (available node labels, relationship types, and property keys). **CRITICAL:** ALWAYS call this tool FIRST to understand the SQLite tables (`nodes`, `edges`, etc.) before writing ANY SQL queries. NEVER use `PRAGMA table_info`."
+        description = "Returns documentation about the graph schema (available node labels, relationship types, and property keys). **CRITICAL:** ALWAYS call this tool FIRST to understand the LadybugDB schema before writing ANY Cypher queries."
     )]
     async fn get_graph_schema(
         &self,
@@ -514,6 +514,54 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     }
 
     #[tool(
+        description = "Returns the current progress of a background deep scan operation. Use this to check if a previously triggered deep_scan has finished populating the graph."
+    )]
+    fn get_deep_scan_status(
+        &self,
+        Parameters(req): Parameters<GetDeepScanStatusRequest>,
+    ) -> Result<String, String> {
+        let db_path = self.resolve_db_path_and_watch(Some(req.project_root.as_str()), None, None);
+        let parent = std::path::Path::new(&db_path).parent().unwrap_or(std::path::Path::new("."));
+        
+        if parent.join(".deep_scan_complete").exists() {
+            return Ok("Status: 100% Complete. The graph is fully populated and ready for queries.".to_string());
+        }
+
+        let state_file = parent.join(".icnow_import_state.json");
+        if let Ok(data) = std::fs::read_to_string(&state_file) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
+                let nodes_imported = json["nodes_imported"].as_u64().unwrap_or(0);
+                let edges_imported = json["edges_imported"].as_u64().unwrap_or(0);
+                let total_nodes = json["total_nodes"].as_u64();
+                let files_scanned = json["files_scanned"].as_u64();
+                let total_files = json["total_files"].as_u64();
+
+                if let (Some(scanned), Some(total)) = (files_scanned, total_files) {
+                    if total > 0 {
+                        let percent = (scanned as f64 / total as f64) * 100.0;
+                        return Ok(format!("Status: Scanning files ({:.1}%). Files scanned: {}/{}", percent, scanned, total));
+                    }
+                }
+
+                if let Some(total) = total_nodes {
+                    if total > 0 {
+                        let percent = (nodes_imported as f64 / total as f64) * 100.0;
+                        return Ok(format!("Status: Importing graph data ({:.1}%). Nodes: {}/{}. Edges: {}.", percent, nodes_imported, total, edges_imported));
+                    }
+                }
+
+                return Ok(format!("Status: Importing graph data. Nodes imported: {}. Edges imported: {}.", nodes_imported, edges_imported));
+            }
+        }
+
+        if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok("Status: Scan is currently initializing or running but no progress data is available yet.".to_string());
+        }
+
+        Ok("Status: No background deep scan is currently active, and no completion marker was found. The graph might be empty or partially populated.".to_string())
+    }
+
+    #[tool(
         description = "[EXPERIMENTAL] Creates or updates a memory node representing a high-level concept or business logic flow, linking it to code nodes or other memory nodes. Enforces prefix 'memory::'. For the `links` array, you DO NOT need exact node IDs! You can simply pass the exact class name (e.g. 'ApplicationController') or file name, and the server will automatically resolve it to the correct Node ID."
     )]
     async fn save_memory(
@@ -590,36 +638,69 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     }
 }
 
+pub fn clean_path(s: &str) -> String {
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut cwd_str = cwd.to_string_lossy().to_string();
+        if !cwd_str.ends_with('/') {
+            cwd_str.push('/');
+        }
+        if s.contains(&cwd_str) {
+            return s.replace(&cwd_str, "");
+        }
+        // Also try without trailing slash just in case
+        let cwd_str_no_slash = cwd.to_string_lossy().to_string();
+        if s.contains(&cwd_str_no_slash) {
+            return s.replace(&cwd_str_no_slash, "");
+        }
+    }
+    s.to_string()
+}
+
+pub fn absolute_node_id(node_id: &str) -> String {
+    if node_id.starts_with('/') || (cfg!(windows) && node_id.contains(":\\")) {
+        return node_id.to_string();
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut cwd_str = cwd.to_string_lossy().to_string();
+        if !cwd_str.ends_with('/') {
+            cwd_str.push('/');
+        }
+        return format!("{}{}", cwd_str, node_id);
+    }
+    node_id.to_string()
+}
+
 pub(crate) fn format_cypher_result(res: &mut lbug::QueryResult) -> Result<String, String> {
     let cols = res.get_column_names();
     if cols.is_empty() {
-        return Ok("No columns returned.".to_string());
+        return Ok("[]".to_string());
     }
 
-    let mut out = format!("| {} |\n", cols.join(" | "));
-    out.push_str(&format!(
-        "| {} |\n",
-        cols.iter().map(|_| "---").collect::<Vec<_>>().join(" | ")
-    ));
-
+    let mut rows = Vec::new();
     for row in res.by_ref() {
-        let mut row_vals = Vec::new();
-        for (i, _col) in cols.iter().enumerate() {
-            let val_str = match &row[i] {
-                lbug::Value::String(s) => s.clone(),
-                lbug::Value::Int64(i) => i.to_string(),
-                lbug::Value::Int32(i) => i.to_string(),
-                lbug::Value::Double(f) => f.to_string(),
-                lbug::Value::Bool(b) => b.to_string(),
-                lbug::Value::Null(_) => "null".to_string(),
-                _ => "?".to_string(),
+        let mut map = serde_json::Map::new();
+        for (i, col) in cols.iter().enumerate() {
+            let val = match &row[i] {
+                lbug::Value::String(s) => serde_json::Value::String(clean_path(s)),
+                lbug::Value::Int64(i) => serde_json::Value::Number((*i).into()),
+                lbug::Value::Int32(i) => serde_json::Value::Number((*i).into()),
+                lbug::Value::Double(f) => {
+                    if let Some(n) = serde_json::Number::from_f64(*f) {
+                        serde_json::Value::Number(n)
+                    } else {
+                        serde_json::Value::Null
+                    }
+                }
+                lbug::Value::Bool(b) => serde_json::Value::Bool(*b),
+                lbug::Value::Null(_) => serde_json::Value::Null,
+                _ => serde_json::Value::String("?".to_string()),
             };
-            row_vals.push(val_str);
+            map.insert(col.clone(), val);
         }
-        out.push_str(&format!("| {} |\n", row_vals.join(" | ")));
+        rows.push(serde_json::Value::Object(map));
     }
 
-    Ok(out)
+    serde_json::to_string(&rows).map_err(|e| format!("JSON serialization failed: {e}"))
 }
 
 #[cfg(test)]
@@ -659,6 +740,10 @@ mod tests {
             properties: HashMap::new(),
         };
         node2.save(&graph).unwrap();
+        
+        // Drop the connections to release the database locks before service calls
+        drop(graph);
+        drop(_conn);
 
         let service = GraphService {
             db_path: db_path.to_string(),

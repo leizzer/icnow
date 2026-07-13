@@ -39,7 +39,7 @@ This document outlines the approved new tools and enhancements for the `icnow` c
 * **Enhancement**: Instead of returning a raw Cypher dump or flat list, recursively format it into an organized markdown tree (e.g., `File -> Class -> Methods`).
 * **Why**: LLMs process hierarchical semantic representations far better than flat relational tables.
 
-### [x] 3. Fix SQLite Lock Errors (`database is locked (5)`)
+### [x] 3. Fix Database Lock Errors (`database is locked (5)`)
 * **Enhancement**: In `src/parser.rs`, accumulating nodes/edges and inserting them in a batch transaction using `graphqlite`'s bulk insertion APIs, instead of autocommitting thousands of times per file.
 * **Why**: This prevents `icnow` from locking up the shared macOS directory during parsing and allows us to re-enable `CALL` node extraction safely.
 

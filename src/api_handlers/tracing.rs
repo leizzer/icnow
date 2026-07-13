@@ -5,17 +5,19 @@ pub fn handle_trace_call_path(db_path: &str, req: TraceCallPathRequest) -> Resul
 
     let max_depth = req.max_depth.unwrap_or(5);
 
+    let abs_start = crate::tools::absolute_node_id(&req.start_node_id);
     let q = if !req.end_node_id.is_empty() {
+        let abs_end = crate::tools::absolute_node_id(&req.end_node_id);
         format!(
             "MATCH (s:Symbol {{id: '{}'}})-[e:CALLS*1..{}]->(t:Symbol {{id: '{}'}}) RETURN e",
-            req.start_node_id.replace("'", "''"),
+            abs_start.replace("'", "''"),
             max_depth,
-            req.end_node_id.replace("'", "''")
+            abs_end.replace("'", "''")
         )
     } else {
         format!(
             "MATCH (s:Symbol {{id: '{}'}})-[e:CALLS*1..{}]->(t:Symbol) RETURN e, t.id AS target_id",
-            req.start_node_id.replace("'", "''"),
+            abs_start.replace("'", "''"),
             max_depth
         )
     };
@@ -32,15 +34,16 @@ pub fn handle_get_dependencies(
 ) -> Result<String, String> {
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
 
+    let abs_node = crate::tools::absolute_node_id(&req.node_id);
     let q = if req.direction == "incoming" {
         format!(
             "MATCH (t:Symbol)-[:CALLS|:IMPORTS|:DEPENDS_ON|:INHERITS|:INSTANTIATES]->(s:Symbol {{id: '{}'}}) RETURN t.id AS target_id, t.name AS name, t.kind AS kind",
-            req.node_id.replace("'", "''")
+            abs_node.replace("'", "''")
         )
     } else {
         format!(
             "MATCH (s:Symbol {{id: '{}'}})-[:CALLS|:IMPORTS|:DEPENDS_ON|:INHERITS|:INSTANTIATES]->(t:Symbol) RETURN t.id AS target_id, t.name AS name, t.kind AS kind",
-            req.node_id.replace("'", "''")
+            abs_node.replace("'", "''")
         )
     };
 
@@ -56,9 +59,10 @@ pub fn handle_traverse_graph(
 ) -> Result<String, String> {
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
     let max_depth = req.max_depth.unwrap_or(2);
+    let abs_node = crate::tools::absolute_node_id(&req.node_id);
     let q = format!(
         "MATCH (s:Symbol {{id: '{}'}})-[r*1..{}]-(t) RETURN r, t.id AS target_id LIMIT 100",
-        req.node_id.replace("'", "''"),
+        abs_node.replace("'", "''"),
         max_depth
     );
     let mut res = conn
