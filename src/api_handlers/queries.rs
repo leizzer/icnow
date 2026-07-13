@@ -34,6 +34,11 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
         "MATCH (n:Symbol) WHERE n.kind <> 'unresolved_symbol' AND (n.name CONTAINS '{query_param}' OR (n.id CONTAINS '{query_param}' AND ('{query_param}' CONTAINS '/' OR '{query_param}' CONTAINS '::')))"
     );
 
+    let definitions_only = req.definitions_only.unwrap_or(true);
+    if definitions_only {
+        q.push_str(" AND n.kind <> 'use_declaration' AND n.kind <> 'import_statement' AND n.kind <> 'export_statement'");
+    }
+
     if let Some(filters) = &req.kind_filter {
         if !filters.is_empty() {
             let filter_placeholders: Vec<String> = filters
@@ -53,60 +58,154 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
         String::new()
     };
 
-    q.push_str(&format!(" RETURN DISTINCT n.id AS id, n.kind AS label, n.signature AS signature, n.docstring AS docstring{limit_clause}"));
+    q.push_str(&format!(" RETURN DISTINCT n.id AS id, n.kind AS label, n.signature AS signature, n.docstring AS docstring, n.file AS file, n.start_line AS start_line, n.end_line AS end_line, n.name AS name{limit_clause}"));
 
     let mut res = conn
         .query(&q)
         .map_err(|e| format!("Failed to search symbols: {e}"))?;
 
-    let cols = res.get_column_names();
-    if cols.is_empty() {
-        return Ok("No columns returned.".to_string());
+    struct SymbolMatch {
+        id: String,
+        label: String,
+        signature: String,
+        docstring: String,
+        file: String,
+        start_line: i64,
+        end_line: i64,
+        name: String,
     }
 
-    let mut out = format!("| {} |\n", cols.join(" | "));
-    out.push_str(&format!(
-        "| {} |\n",
-        cols.iter().map(|_| "---").collect::<Vec<_>>().join(" | ")
-    ));
-
-    let mut seen = std::collections::HashSet::new();
-    let mut row_count = 0;
+    let mut groups: std::collections::HashMap<(String, i64, String), Vec<SymbolMatch>> = std::collections::HashMap::new();
 
     for row in res.by_ref() {
-        let mut row_vals = Vec::new();
-        for (i, _col) in cols.iter().enumerate() {
-            let val_str = match &row[i] {
-                lbug::Value::String(s) => s.clone(),
-                lbug::Value::Int64(i) => i.to_string(),
-                lbug::Value::Int32(i) => i.to_string(),
-                lbug::Value::Double(f) => f.to_string(),
-                lbug::Value::Bool(b) => b.to_string(),
-                lbug::Value::Null(_) => "null".to_string(),
-                _ => "?".to_string(),
+        let id = match &row[0] {
+            lbug::Value::String(s) => crate::tools::clean_path(s),
+            _ => String::new(),
+        };
+        let label = match &row[1] {
+            lbug::Value::String(s) => s.clone(),
+            _ => String::new(),
+        };
+        let signature = match &row[2] {
+            lbug::Value::String(s) => s.clone(),
+            _ => String::new(),
+        };
+        let docstring = match &row[3] {
+            lbug::Value::String(s) => s.clone(),
+            _ => String::new(),
+        };
+        let file = match &row[4] {
+            lbug::Value::String(s) => crate::tools::clean_path(s),
+            _ => String::new(),
+        };
+        let start_line = match &row[5] {
+            lbug::Value::Int64(i) => *i,
+            lbug::Value::Int32(i) => *i as i64,
+            lbug::Value::String(s) => s.parse::<i64>().unwrap_or(0),
+            _ => 0,
+        };
+        let end_line = match &row[6] {
+            lbug::Value::Int64(i) => *i,
+            lbug::Value::Int32(i) => *i as i64,
+            lbug::Value::String(s) => s.parse::<i64>().unwrap_or(0),
+            _ => 0,
+        };
+        let name = match &row[7] {
+            lbug::Value::String(s) => s.clone(),
+            _ => String::new(),
+        };
+
+        let match_item = SymbolMatch {
+            id,
+            label,
+            signature,
+            docstring,
+            file: file.clone(),
+            start_line,
+            end_line,
+            name: name.clone(),
+        };
+
+        let key = (file, start_line, name);
+        groups.entry(key).or_default().push(match_item);
+    }
+
+    let mut final_matches = Vec::new();
+    for (_key, group) in groups {
+        let best = group.into_iter().max_by(|a, b| {
+            let a_has_sig = !a.signature.is_empty();
+            let b_has_sig = !b.signature.is_empty();
+            if a_has_sig != b_has_sig {
+                return a_has_sig.cmp(&b_has_sig);
+            }
+
+            let a_has_doc = !a.docstring.is_empty();
+            let b_has_doc = !b.docstring.is_empty();
+            if a_has_doc != b_has_doc {
+                return a_has_doc.cmp(&b_has_doc);
+            }
+
+            let a_ts = a.label.ends_with("_item") || a.label.ends_with("_statement") || a.label == "class_declaration";
+            let b_ts = b.label.ends_with("_item") || b.label.ends_with("_statement") || b.label == "class_declaration";
+            if a_ts != b_ts {
+                return a_ts.cmp(&b_ts);
+            }
+
+            std::cmp::Ordering::Equal
+        });
+        if let Some(b) = best {
+            final_matches.push(b);
+        }
+    }
+
+    final_matches.sort_by(|a, b| {
+        let file_cmp = a.file.cmp(&b.file);
+        if file_cmp != std::cmp::Ordering::Equal {
+            return file_cmp;
+        }
+        a.start_line.cmp(&b.start_line)
+    });
+
+    if final_matches.is_empty() {
+        return Ok("No matches found. Hint: The target files might not be indexed yet or might be stale. Use the 'coverage_check' tool to verify if the relevant directories are in the graph.".to_string());
+    }
+
+    let detailed = req.detailed.unwrap_or(false);
+    let mut out = String::new();
+
+    if detailed {
+        for m in final_matches {
+            out.push_str("---\n");
+            out.push_str(&format!("id: {}\n", m.id));
+            out.push_str(&format!("kind: {}\n", m.label));
+            if !m.signature.is_empty() {
+                out.push_str(&format!("signature: {}\n", m.signature));
+            }
+            out.push_str(&format!("file: {}\n", m.file));
+            if m.start_line > 0 && m.end_line > 0 {
+                out.push_str(&format!("lines: {}-{}\n", m.start_line, m.end_line));
+            }
+            if !m.docstring.is_empty() {
+                out.push_str(&format!("docstring: {}\n", m.docstring));
+            }
+        }
+    } else {
+        for m in final_matches {
+            let loc = if m.start_line > 0 && m.end_line > 0 {
+                format!("{}:{}-{}", m.file, m.start_line, m.end_line)
+            } else {
+                m.file.clone()
             };
-            row_vals.push(val_str);
-        }
-
-        // Deduplicate based on file_path (from id), label, and signature
-        let id = &row_vals[0];
-        let file_path = id.split("::").next().unwrap_or(id);
-        let label = &row_vals[1];
-        let signature = &row_vals[2];
-        let dedup_key = format!("{}|{}|{}", file_path, label, signature);
-
-        if seen.insert(dedup_key) {
-            out.push_str(&format!("| {} |\n", row_vals.join(" | ")));
-            row_count += 1;
+            let sig = if m.signature.is_empty() {
+                m.name.as_str()
+            } else {
+                m.signature.as_str()
+            };
+            out.push_str(&format!("[{}] {}: {}\n", m.label, loc, sig.replace('\n', " ")));
         }
     }
 
-    if row_count == 0 {
-        return Ok(format!(
-            "{out}\nNo matches found. Hint: The target files might not be indexed yet or might be stale. Use the 'coverage_check' tool to verify if the relevant directories are in the graph."
-        ));
-    }
-    Ok(out)
+    Ok(out.trim().to_string())
 }
 
 pub fn handle_get_file_structure(
@@ -119,16 +218,18 @@ pub fn handle_get_file_structure(
         );
     }
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    
+    let abs_file_path = crate::tools::absolute_node_id(&req.file_path);
     let q = format!(
         "MATCH (f:File {{id: '{}'}})-[:CONTAINS]->(s:Symbol) RETURN s.id AS id, s.kind AS label, s.signature AS signature",
-        req.file_path.replace("'", "''")
+        abs_file_path.replace("'", "''")
     );
     let res = conn
         .query(&q)
         .map_err(|e| format!("Failed to query file structure: {e}"))?;
     let mut out = String::new();
     for row in res {
-        let id = row[0].to_string();
+        let id = crate::tools::clean_path(&row[0].to_string());
         let kind = row[1].to_string();
         let sig = row[2].to_string();
         out.push_str(&format!(
@@ -170,9 +271,11 @@ pub fn handle_get_symbol_implementation(
         );
     }
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    
+    let abs_node_id = crate::tools::absolute_node_id(&req.node_id);
     let q = format!(
         "MATCH (s:Symbol {{id: '{}'}}) RETURN s.file, s.start_line, s.end_line",
-        req.node_id.replace("'", "''")
+        abs_node_id.replace("'", "''")
     );
     let mut res = conn
         .query(&q)
@@ -224,15 +327,17 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
             "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
         );
     }
-    if req.node_id.starts_with('/') && !req.node_id.contains("::") {
+    if !req.node_id.contains("::") {
         return Err(format!(
-            "Error: '{}' is a File ID, not a Symbol ID. To view the contents or structural outline of this file, use 'get_file_structure' instead.",
+            "Error: '{}' is a File path/ID, not a Symbol ID. To view the contents or structural outline of this file, use 'get_file_structure' instead.",
             req.node_id
         ));
     }
 
     let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
-    let node_id = crate::models::escape_cypher_string(&req.node_id);
+    
+    let abs_node_id = crate::tools::absolute_node_id(&req.node_id);
+    let node_id = crate::models::escape_cypher_string(&abs_node_id);
 
     let mut output = String::new();
 
@@ -245,7 +350,7 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     match conn.query(&q_props) {
         Ok(mut res) => {
             if let Some(row) = res.next() {
-                output.push_str(&format!("## Symbol: {node_id}\n"));
+                output.push_str(&format!("## Symbol: {}\n", crate::tools::clean_path(&abs_node_id)));
                 output.push_str(&format!("**Kind**: {}\n", row[0]));
                 if let lbug::Value::String(sig) = &row[1] {
                     if !sig.is_empty() {
@@ -274,7 +379,8 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     );
     if let Ok(mut res) = conn.query(&q_parent) {
         if let Some(row) = res.next() {
-            output.push_str(&format!("**Container**: {} (`{}`)\n\n", row[0], row[1]));
+            let parent_id = crate::tools::clean_path(&row[1].to_string());
+            output.push_str(&format!("**Container**: {} (`{}`)\n\n", row[0], parent_id));
         }
     }
 
@@ -285,7 +391,8 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     if let Ok(res) = conn.query(&q_out) {
         let mut deps = Vec::new();
         for row in res {
-            deps.push(format!("- [{}] -> `{}`", row[0], row[1]));
+            let target_id = crate::tools::clean_path(&row[1].to_string());
+            deps.push(format!("- [{}] -> `{}`", row[0], target_id));
         }
         if !deps.is_empty() {
             output.push_str("### Outgoing Dependencies (What this symbol calls/imports)\n");
@@ -309,9 +416,9 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
         let mut usages = Vec::new();
         for row in res {
             let rel_type = row[0].to_string();
-            let caller_id = row[1].to_string();
+            let caller_id = crate::tools::clean_path(&row[1].to_string());
             let file = if let lbug::Value::String(f) = &row[2] {
-                f.clone()
+                crate::tools::clean_path(f)
             } else {
                 String::new()
             };
@@ -324,7 +431,8 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
             if !file.is_empty() && !line.is_empty() {
                 let mut snippet_str = String::new();
                 if let Ok(line_num) = line.parse::<usize>() {
-                    if let Some(snippet) = extract_snippet(&file, line_num, 2) {
+                    let abs_file = crate::tools::absolute_node_id(&file);
+                    if let Some(snippet) = extract_snippet(&abs_file, line_num, 2) {
                         snippet_str = format!("\n```\n{snippet}\n```");
                     }
                 }
@@ -350,7 +458,7 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
         let mut children = Vec::new();
         for row in res {
             let _rel = row[0].to_string();
-            let c_id = row[1].to_string();
+            let c_id = crate::tools::clean_path(&row[1].to_string());
             let c_kind = row[2].to_string();
             children.push(format!("- `{c_id}` ({c_kind})"));
         }
@@ -470,7 +578,7 @@ pub fn handle_coverage_check(db_path: &str, req: CoverageCheckRequest) -> Result
         }
     }
 
-    let mut output = format!("## Coverage Report for `{}`\n", req.directory_path);
+    let mut output = format!("## Coverage Report for `{}`\n", crate::tools::clean_path(&req.directory_path));
     output.push_str(&format!(
         "- **Total Source Files on Disk**: {}\n",
         disk_files.len()
@@ -485,7 +593,7 @@ pub fn handle_coverage_check(db_path: &str, req: CoverageCheckRequest) -> Result
     if !missing_files.is_empty() {
         output.push_str("### Sample Missing Files\n");
         for f in missing_files.iter().take(10) {
-            output.push_str(&format!("- `{f}`\n"));
+            output.push_str(&format!("- `{}`\n", crate::tools::clean_path(f)));
         }
         if missing_files.len() > 10 {
             output.push_str(&format!("- ... and {} more\n", missing_files.len() - 10));
@@ -496,7 +604,7 @@ pub fn handle_coverage_check(db_path: &str, req: CoverageCheckRequest) -> Result
     if !stale_files.is_empty() {
         output.push_str("### Sample Stale Files\n");
         for f in stale_files.iter().take(10) {
-            output.push_str(&format!("- `{f}`\n"));
+            output.push_str(&format!("- `{}`\n", crate::tools::clean_path(f)));
         }
         if stale_files.len() > 10 {
             output.push_str(&format!("- ... and {} more\n", stale_files.len() - 10));
