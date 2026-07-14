@@ -221,7 +221,7 @@ pub fn handle_get_file_structure(
     
     let abs_file_path = crate::tools::absolute_node_id(&req.file_path);
     let q = format!(
-        "MATCH (f:File {{id: '{}'}})-[:CONTAINS]->(s:Symbol) RETURN s.id AS id, s.kind AS label, s.signature AS signature",
+        "MATCH (f:File {{id: '{}'}})-[:CONTAINS]->(s:Symbol) RETURN s.id AS id, s.kind AS label, s.signature AS signature, s.start_line AS start_line, s.end_line AS end_line",
         abs_file_path.replace("'", "''")
     );
     let res = conn
@@ -232,9 +232,27 @@ pub fn handle_get_file_structure(
         let id = crate::tools::clean_path(&row[0].to_string());
         let kind = row[1].to_string();
         let sig = row[2].to_string();
+        let start_line = match &row[3] {
+            lbug::Value::Int64(i) => *i,
+            lbug::Value::Int32(i) => *i as i64,
+            lbug::Value::String(s) => s.parse::<i64>().unwrap_or(0),
+            _ => 0,
+        };
+        let end_line = match &row[4] {
+            lbug::Value::Int64(i) => *i,
+            lbug::Value::Int32(i) => *i as i64,
+            lbug::Value::String(s) => s.parse::<i64>().unwrap_or(0),
+            _ => 0,
+        };
+        let loc = if start_line > 0 && end_line > 0 {
+            format!(" (lines: {start_line}-{end_line})")
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            "- [{}] {} `{}`\n",
+            "- [{}]{} {} `{}`\n",
             kind,
+            loc,
             id,
             sig.replace("\n", " ")
         ));
@@ -289,11 +307,13 @@ pub fn handle_get_symbol_implementation(
         let start_line = match &row[1] {
             lbug::Value::Int64(i) => *i as usize,
             lbug::Value::Int32(i) => *i as usize,
+            lbug::Value::String(s) => s.parse::<usize>().unwrap_or(0),
             _ => 0, // Fallback if old schema
         };
         let end_line = match &row[2] {
             lbug::Value::Int64(i) => *i as usize,
             lbug::Value::Int32(i) => *i as usize,
+            lbug::Value::String(s) => s.parse::<usize>().unwrap_or(0),
             _ => 0, // Fallback if old schema
         };
 
@@ -345,7 +365,7 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
 
     // 1. Get properties
     let q_props = format!(
-        "MATCH (s:Symbol {{id: '{node_id}'}}) RETURN s.kind AS kind, s.signature AS signature, s.docstring AS docstring, s.name AS name"
+        "MATCH (s:Symbol {{id: '{node_id}'}}) RETURN s.kind AS kind, s.signature AS signature, s.docstring AS docstring, s.name AS name, s.file AS file, s.start_line AS start_line, s.end_line AS end_line"
     );
     match conn.query(&q_props) {
         Ok(mut res) => {
@@ -365,6 +385,32 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
                 if let lbug::Value::String(name_val) = &row[3] {
                     symbol_name = name_val.clone();
                 }
+
+                let file = match &row[4] {
+                    lbug::Value::String(s) => s.clone(),
+                    _ => String::new(),
+                };
+                let start_line = match &row[5] {
+                    lbug::Value::Int64(i) => *i,
+                    lbug::Value::Int32(i) => *i as i64,
+                    lbug::Value::String(s) => s.parse::<i64>().unwrap_or(0),
+                    _ => 0,
+                };
+                let end_line = match &row[6] {
+                    lbug::Value::Int64(i) => *i,
+                    lbug::Value::Int32(i) => *i as i64,
+                    lbug::Value::String(s) => s.parse::<i64>().unwrap_or(0),
+                    _ => 0,
+                };
+
+                if start_line > 0 && end_line > 0 {
+                    output.push_str(&format!("**Location**: {}:{}-{}\n", file, start_line, end_line));
+                    let abs_file = crate::tools::absolute_node_id(&file);
+                    if let Some(snippet) = extract_snippet(&abs_file, start_line as usize, 0) {
+                        output.push_str(&format!("\n```\n{snippet}\n```\n"));
+                    }
+                }
+
                 output.push('\n');
             } else {
                 return Err(format!("Symbol not found: {}", req.node_id));
