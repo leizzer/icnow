@@ -118,7 +118,15 @@ icnow install-skill openai
 
 *(Note: The `install-skill` command assumes a global installation so `icnow` is available seamlessly across any codebase you work in.)*
 
-### 3. Uninstall
+### 3. Update
+
+To update `icnow` to the latest version, run:
+
+```bash
+icnow update
+```
+
+### 4. Uninstall
 
 To completely remove `icnow` global configurations, including the shared `~/.icnow/` directory used to store the centralized graph databases, run:
 
