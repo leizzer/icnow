@@ -1,0 +1,5 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test", "version": "1.0"}}}
+{"jsonrpc": "2.0", "method": "notifications/initialized"}
+{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "parse_project_file", "arguments": {"file_path": "dummy_lines.rb"}}}
+{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_symbol_info", "arguments": {"node_id": "dummy_lines.rb::my_func"}}}
+{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "search_symbols", "arguments": {"query": "my_func"}}}

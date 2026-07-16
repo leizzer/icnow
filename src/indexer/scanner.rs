@@ -690,7 +690,7 @@ struct ImportState {
 pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize, usize)> {
     crate::IS_INDEXING.store(true, std::sync::atomic::Ordering::SeqCst);
     use walkdir::WalkDir;
-    let conn_res = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e));
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| anyhow::anyhow!(e.to_string())); let conn_res = match &db { Ok(d) => lbug::Connection::new(d.as_ref()).map_err(|e| anyhow::anyhow!(e.to_string())), Err(e) => Err(anyhow::anyhow!(e.to_string())) };
     if let Err(e) = conn_res {
         crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
         return Err(e);
@@ -754,15 +754,20 @@ pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize
 
     crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
     // Now trigger import reconciliation explicitly
-    if let Err(e) = crate::indexer::reconciler::reconcile_imports(db_path) {
+    let db = match crate::database::get_or_init_db(db_path) {
+        Ok(c) => c,
+        Err(e) => return Err(anyhow::anyhow!(e)),
+    };
+    let conn = match lbug::Connection::new(db.as_ref()) {
+        Ok(c) => c,
+        Err(e) => return Err(anyhow::anyhow!(e)),
+    };
+    
+    if let Err(e) = crate::indexer::reconciler::reconcile_imports(&conn) {
         tracing::error!("Import reconciliation failed: {e}");
     }
     
     // Attempt to resolve any remaining unresolved symbols globally
-    let conn = match crate::open_db_connection(db_path) {
-        Ok(c) => c,
-        Err(e) => return Err(anyhow::anyhow!(e)),
-    };
     if let Err(e) = crate::indexer::reconciler::reconcile_unresolved_symbols(&conn) {
         tracing::error!("Global unresolved symbols reconciliation failed: {e}");
     }
@@ -795,7 +800,8 @@ pub fn parse_and_import_lsif(
     let nodes_count = all_nodes.len();
     let edges_count = all_edges.len();
 
-    let conn = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| anyhow::anyhow!(e))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     let state_file = std::path::Path::new(db_path)
         .parent()

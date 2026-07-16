@@ -1157,7 +1157,8 @@ mod tests {
         let db_path = "test_parse_twice.db";
         let _ = std::fs::remove_dir_all(db_path);
         let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let graph = crate::open_db_graph(db_path).unwrap();
+        let db = crate::database::get_or_init_db(db_path).unwrap();
+        let graph = lbug::Connection::new(db.as_ref()).unwrap();
 
         let ruby_file =
             "/Users/cristian/Projects/dgapp_bkp/app/controllers/api/v2/webhooks_controller.rb";
@@ -1179,7 +1180,8 @@ mod tests {
         let db_path = "test_parse_rust.db";
         let _ = std::fs::remove_dir_all(db_path);
         let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let graph = crate::open_db_graph(db_path).unwrap();
+        let db = crate::database::get_or_init_db(db_path).unwrap();
+        let graph = lbug::Connection::new(db.as_ref()).unwrap();
 
         let rs_file = "test_data/rust_test.rs";
 
@@ -1205,7 +1207,8 @@ mod tests {
         let db_path = "test_parse_user_rb.db";
         let _ = std::fs::remove_dir_all(db_path);
         let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let graph = crate::open_db_graph(db_path).unwrap();
+        let db = crate::database::get_or_init_db(db_path).unwrap();
+        let graph = lbug::Connection::new(db.as_ref()).unwrap();
         let ruby_file = "/Users/cristian/Projects/dgapp_bkp/app/models/user.rb";
         let res = parse_file(ruby_file, &graph).unwrap();
         println!("Structures: {:?}", res.structures);
@@ -1225,7 +1228,8 @@ mod tests {
         let db_path = "test_parse_python.db";
         let _ = std::fs::remove_dir_all(db_path);
         let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let graph = crate::open_db_graph(db_path).unwrap();
+        let db = crate::database::get_or_init_db(db_path).unwrap();
+        let graph = lbug::Connection::new(db.as_ref()).unwrap();
         let py_file = "test_data/python_test.py";
         let res = crate::indexer::parser::parse_file(py_file, &graph).unwrap();
         println!("Structures: {:?}", res.structures);
@@ -1243,7 +1247,8 @@ mod tests {
         let db_path = "test_parse_go.db";
         let _ = std::fs::remove_dir_all(db_path);
         let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let graph = crate::open_db_graph(db_path).unwrap();
+        let db = crate::database::get_or_init_db(db_path).unwrap();
+        let graph = lbug::Connection::new(db.as_ref()).unwrap();
         let go_file = "test_data/go_test.go";
         let res = crate::indexer::parser::parse_file(go_file, &graph).unwrap();
         println!("Structures: {:?}", res.structures);
@@ -1261,7 +1266,8 @@ mod tests {
         let db_path = "test_parse_ruby.db";
         let _ = std::fs::remove_dir_all(db_path);
         let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let graph = crate::open_db_graph(db_path).unwrap();
+        let db = crate::database::get_or_init_db(db_path).unwrap();
+        let graph = lbug::Connection::new(db.as_ref()).unwrap();
         let rb_file = "test_data/ruby_test.rb";
         let res = crate::indexer::parser::parse_file(rb_file, &graph).unwrap();
         println!("Structures: {:?}", res.structures);
@@ -1279,7 +1285,8 @@ mod tests {
         let db_path = "test_parse_react.db";
         let _ = std::fs::remove_dir_all(db_path);
         let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let graph = crate::open_db_graph(db_path).unwrap();
+        let db = crate::database::get_or_init_db(db_path).unwrap();
+        let graph = lbug::Connection::new(db.as_ref()).unwrap();
         let tsx_file = "test_data/react_test.tsx";
         let res = crate::indexer::parser::parse_file(tsx_file, &graph).unwrap();
         println!("Structures: {:?}", res.structures);

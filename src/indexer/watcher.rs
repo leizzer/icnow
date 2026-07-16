@@ -110,7 +110,7 @@ fn get_val_str(row: &[Value], cols: &[String], name: &str) -> Option<String> {
     })
 }
 
-fn get_val_int(row: &[Value], cols: &[String], name: &str) -> Option<i64> {
+pub fn get_val_int(row: &[Value], cols: &[String], name: &str) -> Option<i64> {
     cols.iter()
         .position(|c| c == name)
         .and_then(|idx| match &row[idx] {
@@ -123,12 +123,13 @@ fn get_val_int(row: &[Value], cols: &[String], name: &str) -> Option<i64> {
 
 pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
     tracing::info!("Reconciling workspace: {:?}", root_dir);
-    let conn = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| anyhow::anyhow!(e))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     let mut db_files = HashMap::new();
     if let Ok(mut res) = conn.query("MATCH (f:File) RETURN f.id, f.last_modified") {
         let cols = res.get_column_names();
-        for row in res.by_ref() {
+        for row in res {
             if let (Some(id), Some(lm)) = (
                 get_val_str(&row, &cols, "f.id"),
                 get_val_int(&row, &cols, "f.last_modified"),
@@ -219,16 +220,23 @@ pub fn reconcile_workspace(root_dir: &Path, db_path: &str) -> Result<()> {
 
     let db_path_clone = db_path.to_string();
     std::thread::spawn(move || {
-        if let Err(e) = crate::indexer::reconciler::reconcile_imports(&db_path_clone) {
-            tracing::error!("Import reconciliation failed: {}", e);
-        }
-        let conn = match crate::open_db_connection(&db_path_clone) {
+        let db = match crate::database::get_or_init_db(&db_path_clone) {
             Ok(c) => c,
             Err(e) => {
-                tracing::error!("Failed to open db for unresolved symbol resolution: {}", e);
+                tracing::error!("Failed to open db for reconciliation: {}", e);
                 return;
             }
         };
+        let conn = match lbug::Connection::new(db.as_ref()) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to create connection for reconciliation: {}", e);
+                return;
+            }
+        };
+        if let Err(e) = crate::indexer::reconciler::reconcile_imports(&conn) {
+            tracing::error!("Import reconciliation failed: {}", e);
+        }
         if let Err(e) = crate::indexer::reconciler::reconcile_unresolved_symbols(&conn) {
             tracing::error!("Global unresolved symbols reconciliation failed: {}", e);
         }
@@ -347,7 +355,8 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
         .unwrap()
         .join(".deep_scan_complete");
     if marker.exists() {
-        if let Ok(conn) = crate::open_db_connection(&db_path) {
+        if let Ok(db) = crate::database::get_or_init_db(&db_path) {
+            if let Ok(conn) = lbug::Connection::new(db.as_ref()) {
             let mut needs_scan = true;
             if let Ok(mut res) = conn.query("MATCH (f:File) RETURN f.id LIMIT 1") {
                 if res.by_ref().next().is_some() {
@@ -364,6 +373,7 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
                     &db_path,
                 );
             }
+            }
         }
     }
 
@@ -378,10 +388,18 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
             continue;
         }
 
-        let conn = match crate::open_db_connection(&db_path) {
+        let db = match crate::database::get_or_init_db(&db_path) {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!("Lock manager failed to open DB: {}", e);
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                continue;
+            }
+        };
+        let conn = match lbug::Connection::new(db.as_ref()) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Lock manager failed to create connection: {}", e);
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 continue;
             }
@@ -420,10 +438,17 @@ pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
 
                     let db_path_clone = db_path.clone();
                     std::thread::spawn(move || {
-                        let conn = match crate::open_db_connection(&db_path_clone) {
+                        let db = match crate::database::get_or_init_db(&db_path_clone) {
                             Ok(c) => c,
                             Err(e) => {
-                                tracing::error!("Watcher thread failed to open connection: {}", e);
+                                tracing::error!("Watcher thread failed to open DB: {}", e);
+                                return;
+                            }
+                        };
+                        let conn = match lbug::Connection::new(db.as_ref()) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::error!("Watcher thread failed to create connection: {}", e);
                                 return;
                             }
                         };

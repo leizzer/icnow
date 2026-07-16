@@ -1,10 +1,34 @@
 extern crate openssl;
 
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 use icnow::resources::ResourceHandler;
 use icnow::tools::GraphService;
-use rmcp::{ServiceExt, transport::stdio};
+use rmcp::{transport::stdio, ServiceExt};
 use tracing_subscriber::{self, EnvFilter};
+
+#[derive(Parser)]
+#[command(name = "icnow", version, about = "ICNOW: Interactive Code Network & Object Workspace MCP server")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    /// Path to the knowledge.db file or directory
+    db_path: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Install an MCP skill for a specific AI assistant
+    InstallSkill {
+        /// Target AI assistant (antigravity, claude, cursor, openai)
+        target: String,
+    },
+    /// Uninstall the ICNOW MCP server and skills
+    Uninstall,
+    /// Update the ICNOW installation
+    Update,
+}
 
 fn init_tracing() {
     tracing_subscriber::fmt()
@@ -16,11 +40,9 @@ fn init_tracing() {
     tracing::info!("Starting icnow Graph MCP server...");
 }
 
-fn resolve_db_path(current_dir: &std::path::Path) -> String {
-    // Parse db_path from command-line args if provided, otherwise default to Cwd/knowledge.db
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 {
-        args[1].clone()
+fn resolve_db_path(current_dir: &std::path::Path, provided_path: Option<String>) -> String {
+    if let Some(path) = provided_path {
+        path
     } else {
         current_dir
             .join("knowledge.db")
@@ -31,35 +53,37 @@ fn resolve_db_path(current_dir: &std::path::Path) -> String {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() >= 3 && args[1] == "install-skill" {
-        let target = &args[2];
-        if let Err(e) = icnow::installer::run_installer(target) {
-            eprintln!("Installation failed: {e:?}");
-            std::process::exit(1);
+    let cli = Cli::parse();
+
+    match cli.command {
+        Some(Commands::InstallSkill { target }) => {
+            if let Err(e) = icnow::installer::run_installer(&target) {
+                eprintln!("Installation failed: {e:?}");
+                std::process::exit(1);
+            }
+            return Ok(());
         }
-        return Ok(());
-    } else if args.len() >= 2 && args[1] == "install-skill" {
-        eprintln!("Usage: icnow install-skill <antigravity|claude|cursor|openai>");
-        std::process::exit(1);
-    } else if args.len() >= 2 && args[1] == "uninstall" {
-        if let Err(e) = icnow::installer::run_uninstall() {
-            eprintln!("Uninstall failed: {e:?}");
-            std::process::exit(1);
+        Some(Commands::Uninstall) => {
+            if let Err(e) = icnow::installer::run_uninstall() {
+                eprintln!("Uninstall failed: {e:?}");
+                std::process::exit(1);
+            }
+            return Ok(());
         }
-        return Ok(());
-    } else if args.len() >= 2 && args[1] == "update" {
-        if let Err(e) = icnow::installer::run_update() {
-            eprintln!("Update failed: {e:?}");
-            std::process::exit(1);
+        Some(Commands::Update) => {
+            if let Err(e) = icnow::installer::run_update() {
+                eprintln!("Update failed: {e:?}");
+                std::process::exit(1);
+            }
+            return Ok(());
         }
-        return Ok(());
+        None => {}
     }
 
     init_tracing();
 
     let current_dir = std::env::current_dir()?;
-    let db_path = resolve_db_path(&current_dir);
+    let db_path = resolve_db_path(&current_dir, cli.db_path);
 
     let service = GraphService {
         db_path: db_path.clone(),

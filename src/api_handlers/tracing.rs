@@ -1,7 +1,8 @@
 use crate::tools::{GetDependenciesRequest, TraceCallPathRequest};
 
 pub fn handle_trace_call_path(db_path: &str, req: TraceCallPathRequest) -> Result<String, String> {
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
 
     let max_depth = req.max_depth.unwrap_or(5);
 
@@ -32,7 +33,8 @@ pub fn handle_get_dependencies(
     db_path: &str,
     req: GetDependenciesRequest,
 ) -> Result<String, String> {
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
 
     let abs_node = crate::tools::absolute_node_id(&req.node_id);
     let q = if req.direction == "incoming" {
@@ -57,7 +59,8 @@ pub fn handle_traverse_graph(
     db_path: &str,
     req: crate::tools::TraverseGraphRequest,
 ) -> Result<String, String> {
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
     let max_depth = req.max_depth.unwrap_or(2);
     let abs_node = crate::tools::absolute_node_id(&req.node_id);
     let q = format!(

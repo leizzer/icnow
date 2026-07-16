@@ -1,7 +1,7 @@
 use anyhow::Result;
 use lbug::Value;
 
-fn get_str_val(row: &[Value], cols: &[String], name: &str) -> Option<String> {
+pub fn get_str_val(row: &[Value], cols: &[String], name: &str) -> Option<String> {
     cols.iter().position(|c| c == name).and_then(|idx| {
         if let Value::String(s) = &row[idx] {
             Some(s.clone())
@@ -11,13 +11,12 @@ fn get_str_val(row: &[Value], cols: &[String], name: &str) -> Option<String> {
     })
 }
 
-pub fn reconcile_imports(db_path: &str) -> Result<()> {
+pub fn reconcile_imports(conn: &lbug::Connection) -> Result<()> {
     if crate::IS_INDEXING.load(std::sync::atomic::Ordering::SeqCst) {
         tracing::info!("Skipping import reconciliation because deep scan is currently running.");
         return Ok(());
     }
     tracing::info!("Starting background import reconciliation...");
-    let conn = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e))?;
 
     let query = "MATCH (f:File)-[r]->(i:Symbol) WHERE struct_extract(r, '_LABEL') = 'CONTAINS' AND i.kind = 'Import' RETURN f.id, i.id, i.name";
 
@@ -31,11 +30,11 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
 
     let cols = res.get_column_names();
     let mut import_rows = Vec::new();
-    for row in res.by_ref() {
+    for mut row_vec in res {
         if let (Some(f_id), Some(i_id), Some(i_name)) = (
-            get_str_val(&row, &cols, "f.id"),
-            get_str_val(&row, &cols, "i.id"),
-            get_str_val(&row, &cols, "i.name"),
+            get_str_val(&row_vec, &cols, "f.id"),
+            get_str_val(&row_vec, &cols, "i.id"),
+            get_str_val(&row_vec, &cols, "i.name"),
         ) {
             import_rows.push((f_id, i_id, i_name));
         }
@@ -44,8 +43,8 @@ pub fn reconcile_imports(db_path: &str) -> Result<()> {
     let mut known_files = Vec::new();
     if let Ok(mut file_res) = conn.query("MATCH (f:File) RETURN f.id") {
         let file_cols = file_res.get_column_names();
-        for row in file_res.by_ref() {
-            if let Some(f_id) = get_str_val(&row, &file_cols, "f.id") {
+        for mut row_vec in file_res {
+            if let Some(f_id) = get_str_val(&row_vec, &file_cols, "f.id") {
                 known_files.push(f_id);
             }
         }

@@ -12,7 +12,8 @@ pub fn handle_query_graph_cypher(
             "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
         );
     }
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
     let mut res = conn
         .query(&req.query)
         .map_err(|e| format!("Cypher query failed: {e}"))?;
@@ -26,7 +27,8 @@ pub fn handle_search_symbols(db_path: &str, req: SearchSymbolsRequest) -> Result
         );
     }
 
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
 
     let query_param = req.query.replace("'", "''");
 
@@ -217,7 +219,8 @@ pub fn handle_get_file_structure(
             "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
         );
     }
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
     
     let abs_file_path = crate::tools::absolute_node_id(&req.file_path);
     let q = format!(
@@ -272,7 +275,8 @@ pub fn handle_list_indexed_files(
             "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
         );
     }
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
     let mut res = conn
         .query("MATCH (f:File) RETURN f.id AS id ORDER BY f.id")
         .map_err(|e| format!("Failed to list files: {e}"))?;
@@ -288,7 +292,8 @@ pub fn handle_get_symbol_implementation(
             "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
         );
     }
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
     
     let abs_node_id = crate::tools::absolute_node_id(&req.node_id);
     let q = format!(
@@ -354,7 +359,8 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
         ));
     }
 
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
     
     let abs_node_id = crate::tools::absolute_node_id(&req.node_id);
     let node_id = crate::models::escape_cypher_string(&abs_node_id);
@@ -451,6 +457,10 @@ pub fn handle_get_symbol_info(db_path: &str, req: GetSymbolInfoRequest) -> Resul
     let base_name = symbol_name.split("::").last().unwrap_or(&symbol_name);
     let dot_base = format!(".{base_name}");
     let colon_base = format!("::{base_name}");
+    
+    let base_name = crate::models::escape_cypher_string(&base_name);
+    let dot_base = crate::models::escape_cypher_string(&dot_base);
+    let colon_base = crate::models::escape_cypher_string(&colon_base);
 
     let q_in = format!(
         "MATCH (caller:Symbol)-[r:CALLS|:IMPORTS|:INHERITS]->(t:Symbol) 
@@ -578,7 +588,8 @@ pub fn handle_coverage_check(db_path: &str, req: CoverageCheckRequest) -> Result
             "Database is currently indexing. Please wait a few seconds and try again.".to_string(),
         );
     }
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
 
     let dir_path = std::path::Path::new(&req.directory_path);
     if !dir_path.exists() || !dir_path.is_dir() {
@@ -595,32 +606,33 @@ pub fn handle_coverage_check(db_path: &str, req: CoverageCheckRequest) -> Result
     let mut missing_files = Vec::new();
     let mut stale_files = Vec::new();
 
+    let mut db_files = std::collections::HashMap::new();
+    if let Ok(mut res) = conn.query("MATCH (f:File) RETURN f.id, f.last_modified") {
+        let cols = res.get_column_names();
+        for row in res.by_ref() {
+            if let (Some(id), Some(lm)) = (
+                crate::indexer::reconciler::get_str_val(&row, &cols, "f.id"),
+                crate::indexer::watcher::get_val_int(&row, &cols, "f.last_modified"),
+            ) {
+                db_files.insert(id, lm);
+            }
+        }
+    }
+
     for file_path in &disk_files {
-        let q = format!(
-            "MATCH (f:File {{id: '{}'}}) RETURN f.last_modified",
-            crate::models::escape_cypher_string(file_path)
-        );
-        match conn.query(&q) {
-            Ok(mut res) => {
-                if let Some(row) = res.by_ref().next() {
-                    indexed_count += 1;
-                    if let lbug::Value::Int64(last_mod) = row[0] {
-                        if let Ok(meta) = std::fs::metadata(file_path) {
-                            if let Ok(modified) = meta.modified() {
-                                if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH)
-                                {
-                                    if duration.as_secs() as i64 > last_mod {
-                                        stale_files.push(file_path.clone());
-                                    }
-                                }
-                            }
+        if let Some(&last_mod) = db_files.get(file_path) {
+            indexed_count += 1;
+            if let Ok(meta) = std::fs::metadata(file_path) {
+                if let Ok(modified) = meta.modified() {
+                    if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                        if duration.as_secs() as i64 > last_mod {
+                            stale_files.push(file_path.clone());
                         }
                     }
-                } else {
-                    missing_files.push(file_path.clone());
                 }
             }
-            Err(_) => missing_files.push(file_path.clone()),
+        } else {
+            missing_files.push(file_path.clone());
         }
     }
 

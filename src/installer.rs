@@ -158,23 +158,34 @@ fn install_claude() -> Result<()> {
     let bin_path = resolve_binary_path().unwrap_or_else(|_| "icnow".to_string());
     println!("Using binary path: {bin_path}");
 
-    let status = Command::new("claude")
+    let output = Command::new("claude")
         .arg("mcp")
         .arg("add")
         .arg("--scope")
         .arg("user")
         .arg("icnow")
         .arg(&bin_path)
-        .status()
+        .output()
         .context(
             "Failed to run 'claude' command. Make sure Claude Code is installed and in your PATH.",
         )?;
 
-    if status.success() {
+    if output.status.success() {
         println!("Successfully registered icnow with Claude Code!");
         Ok(())
     } else {
-        anyhow::bail!("claude mcp add command failed with exit code: {status}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stderr.contains("already exists") || stdout.contains("already exists") {
+            println!("icnow is already registered with Claude Code.");
+            Ok(())
+        } else {
+            anyhow::bail!(
+                "claude mcp add command failed with exit code: {}. Error: {}",
+                output.status,
+                stderr
+            );
+        }
     }
 }
 

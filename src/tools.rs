@@ -86,8 +86,8 @@ impl GraphService {
                 Some(&req.node.id),
                 None,
             );
-            let graph =
-                crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+            let db = crate::database::get_or_init_db(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+            let graph = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
 
             req.node.save(&graph).map_err(|e| e.to_string())?;
 
@@ -110,8 +110,9 @@ impl GraphService {
                 Some(&req.edge.source),
                 None,
             );
-            let graph =
-                crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+             
+            let db = crate::database::get_or_init_db(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+            let graph = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
 
             req.edge.save(&graph).map_err(|e| e.to_string())?;
 
@@ -134,8 +135,9 @@ impl GraphService {
                 Some(&req.file_path),
                 None,
             );
-            let graph =
-                crate::open_db_graph(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+             
+            let db = crate::database::get_or_init_db(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+            let graph = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
             let _ = graph.query("BEGIN TRANSACTION");
             let summary =
                 crate::indexer::parser::parse_file(&req.file_path, &graph).map_err(|e| {
@@ -714,8 +716,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(db_path);
         let _ = std::fs::remove_file(format!("{db_path}.wal"));
 
-        let _conn = crate::open_db_connection(db_path).unwrap();
-        let graph = crate::open_db_graph(db_path).unwrap();
+        let db = crate::database::get_or_init_db(db_path).unwrap();
+        let _conn = lbug::Connection::new(db.as_ref()).unwrap();
+        let db2 = crate::database::get_or_init_db(db_path).unwrap();
+        let graph = lbug::Connection::new(db2.as_ref()).unwrap();
 
         // 1. Create a dummy code node so we can validate links pointing to it
         let node1 = crate::models::Node {

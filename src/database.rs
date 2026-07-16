@@ -1,9 +1,7 @@
 use lbug::{Connection, Database, SystemConfig};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
-
-static DBS: OnceLock<Mutex<HashMap<String, &'static Database>>> = OnceLock::new();
-
+static DBS: OnceLock<Mutex<HashMap<String, std::sync::Arc<Database>>>> = OnceLock::new();
 pub fn resolve_centralized_db_path(original_db_path: &str) -> String {
     #[cfg(test)]
     {
@@ -30,11 +28,10 @@ pub fn resolve_centralized_db_path(original_db_path: &str) -> String {
             Err(_) => parent.to_string_lossy().to_string(),
         };
 
-        let mut hash: u64 = 0xcbf29ce484222325;
-        for byte in abs_parent.bytes() {
-            hash ^= byte as u64;
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        abs_parent.hash(&mut hasher);
+        let hash = hasher.finish();
         let hash_str = format!("{hash:016x}");
 
         let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
@@ -55,16 +52,16 @@ pub fn resolve_centralized_db_path(original_db_path: &str) -> String {
     }
 }
 
-pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
+pub fn get_or_init_db(path: &str) -> Result<std::sync::Arc<Database>, String> {
     tracing::info!("get_or_init_db called with path: {}", path);
     let remapped_path = resolve_centralized_db_path(path);
     let map = DBS.get_or_init(|| Mutex::new(HashMap::new()));
 
     let cache_key = path.to_string();
-    let mut guard = map.lock().unwrap();
+    let mut guard = map.lock().map_err(|e| format!("DB Cache Mutex poisoned: {}", e))?;
     if let Some(db) = guard.get(&cache_key) {
         tracing::info!("Found existing DB for path: {}", cache_key);
-        return Ok(*db);
+        return Ok(db.clone());
     }
 
     let path_str = remapped_path.clone();
@@ -120,8 +117,8 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
             }
         }
     };
-    let leaked_db = Box::leak(Box::new(db));
-    let conn = Connection::new(leaked_db).unwrap();
+    let arc_db = std::sync::Arc::new(db);
+    let conn = Connection::new(arc_db.as_ref()).unwrap();
     tracing::info!("Calling init_schema");
     init_schema(&conn)?;
 
@@ -131,20 +128,18 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
     }
 
     tracing::info!("Inserting DB into map");
-    guard.insert(cache_key, leaked_db);
+    guard.insert(cache_key, arc_db.clone());
+
+    drop(conn);
 
     tracing::info!("Returning DB");
-    Ok(leaked_db)
+    Ok(arc_db)
 }
 
-pub fn open_db_connection(path: &str) -> Result<Connection<'static>, String> {
-    let db = get_or_init_db(path)?;
-    Connection::new(db).map_err(|e| format!("Failed to create connection: {e}"))
-}
-
-pub fn open_db_graph(path: &str) -> Result<Connection<'static>, String> {
-    open_db_connection(path) // Aliased for backwards compatibility in unrefactored code
-}
+// Removed open_db_connection and open_db_graph as they are fundamentally incompatible
+// with Arc<Database> lifetimes. Callers must do:
+// let db = get_or_init_db(path)?;
+// let conn = lbug::Connection::new(db.as_ref()).map_err(...)?;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     let node_tables = vec![
@@ -153,7 +148,12 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         "CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, name STRING, description STRING, keywords STRING, embedding FLOAT[384], PRIMARY KEY(id))",
     ];
     for table in node_tables {
-        let _ = conn.query(table); // Ignore errors as they might just mean table already exists
+        if let Err(e) = conn.query(table) {
+            let err_str = e.to_string();
+            if !err_str.contains("already exists") {
+                tracing::warn!("Failed to init node table: {}", err_str);
+            }
+        }
     }
 
     let rel_tables = vec![
@@ -167,7 +167,12 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         "CREATE REL TABLE IF NOT EXISTS DEPENDS_ON (FROM Symbol TO Symbol, FROM File TO Symbol, FROM Symbol TO File, FROM File TO File)",
     ];
     for table in rel_tables {
-        let _ = conn.query(table); // Ignore errors
+        if let Err(e) = conn.query(table) {
+            let err_str = e.to_string();
+            if !err_str.contains("already exists") {
+                tracing::warn!("Failed to init rel table: {}", err_str);
+            }
+        }
     }
 
     Ok(())

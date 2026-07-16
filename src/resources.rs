@@ -31,7 +31,12 @@ impl Service<RoleServer> for ResourceHandler {
                 let db_path = self.inner.resolve_db_path_and_watch(None, None, None);
                 let result = tokio::task::spawn_blocking(
                     move || -> Result<Vec<serde_json::Value>, String> {
-                        let conn = crate::open_db_connection(&db_path)
+                        let db_res = crate::database::get_or_init_db(&db_path);
+                        let conn_res = match &db_res {
+                            Ok(db) => lbug::Connection::new(db.as_ref()).map_err(|e| e.to_string()),
+                            Err(e) => Err(e.clone()),
+                        };
+                        let conn = conn_res
                             .map_err(|e| format!("Failed to open DB: {e}"))?;
 
                         let project_root = std::path::Path::new(&db_path)
@@ -145,7 +150,12 @@ impl Service<RoleServer> for ResourceHandler {
                     let uri = uri_clone;
                     if uri.starts_with("memory://") {
                         let id = uri.trim_start_matches("memory://").to_string();
-                        let conn = crate::open_db_connection(&db_path)
+                        let db_res = crate::database::get_or_init_db(&db_path);
+                        let conn_res = match &db_res {
+                            Ok(db) => lbug::Connection::new(db.as_ref()).map_err(|e| e.to_string()),
+                            Err(e) => Err(e.clone()),
+                        };
+                        let conn = conn_res
                             .map_err(|e| format!("Failed to open DB: {e}"))?;
 
                         let escaped_id = id.replace("'", "''");
@@ -183,7 +193,12 @@ impl Service<RoleServer> for ResourceHandler {
                             std::path::Path::new(&project_root).join(&raw_id).to_string_lossy().to_string()
                         };
 
-                        let conn = crate::open_db_connection(&db_path)
+                        let db_res = crate::database::get_or_init_db(&db_path);
+                        let conn_res = match &db_res {
+                            Ok(db) => lbug::Connection::new(db.as_ref()).map_err(|e| e.to_string()),
+                            Err(e) => Err(e.clone()),
+                        };
+                        let conn = conn_res
                             .map_err(|e| format!("Failed to open DB: {e}"))?;
 
                         let escaped_id = id.replace("'", "''");

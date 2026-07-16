@@ -3,7 +3,8 @@ use std::fs::File;
 use std::io::Write;
 
 pub fn generate_html(db_path: &str, out_path: &str, filter_path: &str) -> Result<()> {
-    let conn = crate::open_db_connection(db_path).map_err(|e| anyhow::anyhow!(e))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| anyhow::anyhow!(e))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| anyhow::anyhow!(e))?;
 
     let mut elements = Vec::new();
     let mut included_nodes = std::collections::HashSet::new();

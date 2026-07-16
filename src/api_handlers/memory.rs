@@ -116,7 +116,8 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
         );
     }
 
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
 
     let mut resolved_links = Vec::with_capacity(req.links.len());
     for target in &req.links {
@@ -156,7 +157,7 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
 
     let text_to_embed = format!("{} {} {}", req.name, req.description, keywords_str);
     let model = crate::get_embedding_model();
-    let mut model_lock = model.lock().unwrap();
+    let mut model_lock = model.lock().map_err(|e| format!("Embedding model lock poisoned: {}", e))?;
     let embeddings = model_lock
         .embed(vec![text_to_embed], None)
         .map_err(|e| format!("Failed to generate embedding: {e}"))?;
@@ -213,7 +214,7 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
 pub fn backup_all_memories(conn: &lbug::Connection, db_path: &str) {
     let backup_path = std::path::Path::new(db_path)
         .parent()
-        .unwrap()
+        .unwrap_or(std::path::Path::new("."))
         .join("memories_backup.json");
 
     let mut backups = Vec::new();
@@ -261,7 +262,7 @@ pub fn backup_all_memories(conn: &lbug::Connection, db_path: &str) {
 pub fn restore_all_memories(conn: &lbug::Connection, db_path: &str) {
     let backup_path = std::path::Path::new(db_path)
         .parent()
-        .unwrap()
+        .unwrap_or(std::path::Path::new("."))
         .join("memories_backup.json");
     if let Ok(json) = std::fs::read_to_string(&backup_path) {
         if let Ok(backups) = serde_json::from_str::<Vec<BackupMemory>>(&json) {
@@ -300,7 +301,8 @@ pub fn handle_get_memory(db_path: &str, req: GetMemoryRequest) -> Result<String,
         return Err("Memory ID must start with 'memory::' prefix".to_string());
     }
 
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
 
     let q = format!(
         "MATCH (m:Memory {{id: '{}'}}) RETURN m.name AS name, m.description AS description, m.keywords AS keywords",
@@ -374,12 +376,13 @@ pub fn handle_get_memory(db_path: &str, req: GetMemoryRequest) -> Result<String,
 }
 
 pub fn handle_search_memories(db_path: &str, req: SearchMemoriesRequest) -> Result<String, String> {
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
 
     let limit = 10;
 
     let model = crate::get_embedding_model();
-    let mut model_lock = model.lock().unwrap();
+    let mut model_lock = model.lock().map_err(|e| format!("Embedding model lock poisoned: {}", e))?;
     let query_embeddings = model_lock
         .embed(vec![req.query.clone()], None)
         .map_err(|e| format!("Failed to generate embedding: {e}"))?;
@@ -413,11 +416,12 @@ pub fn handle_search_memories(db_path: &str, req: SearchMemoriesRequest) -> Resu
         });
     }
 
-    Ok(serde_json::to_string_pretty(&results).unwrap())
+    Ok(serde_json::to_string_pretty(&results).map_err(|e| format!("Failed to serialize results: {e}"))?)
 }
 
 pub fn handle_list_memories(db_path: &str, _req: ListMemoriesRequest) -> Result<String, String> {
-    let conn = crate::open_db_connection(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
 
     let mut res = conn
         .query("MATCH (m:Memory) RETURN m.id AS id, m.name AS name")
@@ -432,5 +436,5 @@ pub fn handle_list_memories(db_path: &str, _req: ListMemoriesRequest) -> Result<
         });
     }
 
-    Ok(serde_json::to_string_pretty(&results).unwrap())
+    Ok(serde_json::to_string_pretty(&results).map_err(|e| format!("Failed to serialize results: {e}"))?)
 }
