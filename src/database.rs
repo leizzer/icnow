@@ -109,7 +109,9 @@ pub fn get_or_init_db(path: &str) -> Result<&'static Database, String> {
                     "Corrupted WAL file detected at {}. Wiping and reinitializing...",
                     path_str
                 );
-                let _ = std::fs::remove_dir_all(&path_str);
+                let _ = std::fs::remove_file(&path_str);
+                let _ = std::fs::remove_file(format!("{}.wal", path_str));
+                let _ = std::fs::remove_file(format!("{}.shm", path_str));
                 is_fresh = true;
                 Database::new(&path_str, cfg.clone())
                     .map_err(|e2| format!("Failed to open DB after wiping: {e2}"))?

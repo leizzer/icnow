@@ -581,10 +581,11 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
     fn get_version(&self, req: Parameters<GetVersionRequest>) -> Result<String, String> {
         let db_path =
             self.resolve_db_path_and_watch(req.0.project_root.as_deref(), None, None);
+        let actual_db_path = crate::database::resolve_centralized_db_path(&db_path);
         let version = env!("CARGO_PKG_VERSION").to_string();
         let res = serde_json::json!({
             "version": version,
-            "db_path": db_path
+            "db_path": actual_db_path
         });
         Ok(res.to_string())
     }
