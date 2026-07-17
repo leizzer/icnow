@@ -133,13 +133,7 @@ For detailed Cypher query examples and syntax guidelines, please refer to the [C
 
 ---
 
-## 🛠️ 7. The Tool Arsenal
-
-For a complete breakdown of all 16 `icnow` MCP tools, their arguments, and their exact expected `**Returns**` structures, please refer to the [Tool Arsenal Reference](references/tool_arsenal.md).
-
----
-
-## 🔗 8. MCP Resources & Claude Code Config
+## 🔗 7. MCP Resources & Claude Code Config
 
 `icnow` exposes codebase files and symbols directly as **MCP Resources**. This allows users and compatible clients (like Claude Code and Claude Desktop) to attach code context seamlessly via the UI (e.g., using `@` mentions).
 

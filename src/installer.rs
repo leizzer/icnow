@@ -91,9 +91,14 @@ fn install_antigravity() -> Result<()> {
     std::fs::create_dir_all(&target_dir).context("Failed to create skill directory")?;
 
     let target_file = target_dir.join("SKILL.md");
+    let file_existed = target_file.exists();
     let content = include_str!("../.agents/skills/icnow/SKILL.md");
     std::fs::write(&target_file, content).context("Failed to write SKILL.md")?;
-    println!("File modified: {}", target_file.display());
+    if file_existed {
+        println!("✓ Overwrote existing SKILL.md with the latest version at: {}", target_file.display());
+    } else {
+        println!("✓ Created new SKILL.md at: {}", target_file.display());
+    }
 
     let references_dir = target_dir.join("references");
     std::fs::create_dir_all(&references_dir).context("Failed to create references directory")?;
@@ -101,10 +106,6 @@ fn install_antigravity() -> Result<()> {
     let cypher_target = references_dir.join("cypher_examples.md");
     let cypher_content = include_str!("../.agents/skills/icnow/references/cypher_examples.md");
     std::fs::write(&cypher_target, cypher_content).context("Failed to write cypher_examples.md")?;
-
-    let tools_target = references_dir.join("tool_arsenal.md");
-    let tools_content = include_str!("../.agents/skills/icnow/references/tool_arsenal.md");
-    std::fs::write(&tools_target, tools_content).context("Failed to write tool_arsenal.md")?;
 
     // Also inject the MCP server configuration into mcp_config.json
     let mcp_config_path = home.join(".gemini/config/mcp_config.json");

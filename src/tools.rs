@@ -122,7 +122,8 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Parses a source file (Rust, Ruby, TypeScript, TSX) using Tree-sitter, extracts all structural nodes (Functions, Methods, Classes, Interfaces, Imports), and automatically adds them and their container relationships to the graph database. Call this tool first to map out the architecture of a new or modified file."
+        description = r#"Parses a source file using Tree-sitter, extracts all structural nodes, and automatically adds them and their container relationships to the graph database. Call this tool if `coverage_check` shows a file is missing or out-of-date.
+**Returns**: A success confirmation and a brief architectural summary of what was newly indexed."#
     )]
     async fn parse_project_file(
         &self,
@@ -236,7 +237,9 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Searches the graph for nodes matching a symbol name or pattern (e.g., a class, function, or file name). Use this tool to instantly find where a symbol is defined across the entire workspace without knowing its file path."
+        description = r#"Searches the graph for nodes matching a symbol name or pattern (e.g., a class, function, or file name). 
+Use this tool to instantly find where a symbol is defined across the entire workspace without knowing its file path.
+**Returns**: A list of matches with precise line coordinates (e.g., `[Class] app/models/user.rb:42-80: class User`)."#
     )]
     async fn search_symbols(
         &self,
@@ -271,7 +274,9 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Returns the structural outline of a source file (including its Classes, Methods, and Singleton Methods) by directly querying the pre-indexed graph database. Use this tool instead of `parse_project_file` when you only need to see what symbols are defined inside a file without incurring the heavy cost of disk reads or re-parsing. It efficiently lists the NodeIDs which you can then pass to `traverse_graph` or `get_dependencies` to explore their call relationships."
+        description = r#"Returns the structural outline of a source file (including its Classes, Methods, and Singleton Methods) by directly querying the pre-indexed graph database. 
+Use this tool instead of `parse_project_file` when you only need to see what symbols are defined inside a file without incurring the heavy cost of disk reads.
+**Returns**: A bulleted list of symbols in the file with line numbers (e.g., `- [Method] (lines: 10-25) class::method signature`)."#
     )]
     async fn get_file_structure(
         &self,
@@ -306,7 +311,9 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Analyzes a directory to report index staleness and coverage. Given a directory path, it recursively scans for source files (.rb, .rs, .ts) and cross-references them against the graph database. Returns a detailed report of how many files are indexed, missing, or stale (modified on disk since indexing), along with a sample list of missing/stale files. Use this BEFORE searching when you suspect files might be missing from the graph."
+        description = r#"Analyzes a directory to report index staleness and coverage. Given a directory path, it recursively scans for source files and cross-references them against the graph database. 
+Use this BEFORE searching when you suspect files might be missing from the graph.
+**Returns**: A markdown report listing total files, indexed counts, and sample lists of missing/stale files."#
     )]
     async fn coverage_check(
         &self,
@@ -349,7 +356,8 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Retrieves the raw source code block (implementation body) of a specific symbol (e.g. class, method, or standalone function) without reading the entire file. Use this tool when you need to inspect the actual code logic of a node found via search_symbols or get_file_structure."
+        description = r#"Retrieves the raw source code block (implementation body) of a specific symbol (e.g. class, method, or standalone function) directly from the database without reading the entire file. Use this tool when you need to inspect the actual code logic of a node found via search_symbols or get_file_structure.
+**Returns**: The raw text of the code implementation block, bounded by exact line numbers."#
     )]
     async fn get_symbol_implementation(
         &self,
@@ -368,7 +376,9 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Returns complete 360-degree context for a single node ID. Includes its basic properties (signature, docstring), the parent container it belongs to, its outgoing dependencies (what it calls/imports), and its incoming usages (what calls it). Use this tool instead of writing complex Cypher queries to instantly understand how a symbol fits into the codebase."
+        description = r#"Returns complete 360-degree context for a single node ID. 🌟 HIGHLY RECOMMENDED 🌟
+Includes its basic properties (signature, docstring), the parent container it belongs to, its outgoing dependencies (what it calls/imports), and its incoming usages (what calls it). Use this tool instead of writing complex Cypher queries to instantly understand how a symbol fits into the codebase.
+**Returns**: A markdown summary containing the exact file location, raw code snippet, and detailed lists of all incoming usages and outgoing dependencies (with file:line accuracy)."#
     )]
     async fn get_symbol_info(
         &self,
@@ -387,7 +397,8 @@ impl GraphService {
     }
 
     #[tool(
-        description = "Traces multi-hop call paths between a specific start_node_id and end_node_id up to a max_depth. Useful for finding how a controller reaches a specific database model or service without having to call get_dependencies repeatedly."
+        description = r#"Traces multi-hop call paths between a specific start_node_id and end_node_id up to a max_depth. Useful for finding how a controller reaches a specific database model or service without having to call get_dependencies repeatedly.
+**Returns**: A step-by-step trace showing the chain of CALLS edges between the two nodes."#
     )]
     async fn trace_call_path(
         &self,
