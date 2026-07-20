@@ -514,6 +514,11 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
                     if let Some(parent) = std::path::Path::new(&remapped).parent() {
                         let _ = std::fs::write(parent.join(".deep_scan_complete"), "");
                     }
+                    
+                    ::tracing::info!("Running fallback workspace reconciliation to catch missing files...");
+                    if let Err(e) = crate::indexer::watcher::reconcile_workspace(std::path::Path::new(&inferred_root_clone), &db_path_clone) {
+                        ::tracing::error!("Fallback workspace reconciliation failed: {}", e);
+                    }
                 }
                 Err(e) => {
                     ::tracing::error!("Background Import failed: {}", e);

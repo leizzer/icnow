@@ -349,34 +349,6 @@ fn try_acquire_watcher_lock(conn: &Connection, pid: u32) -> std::result::Result<
 }
 
 pub fn run_watcher_lifecycle(root_dir: PathBuf, db_path: String) {
-    let remapped = crate::resolve_centralized_db_path(&db_path);
-    let marker = std::path::Path::new(&remapped)
-        .parent()
-        .unwrap()
-        .join(".deep_scan_complete");
-    if marker.exists() {
-        if let Ok(db) = crate::database::get_or_init_db(&db_path) {
-            if let Ok(conn) = lbug::Connection::new(db.as_ref()) {
-            let mut needs_scan = true;
-            if let Ok(mut res) = conn.query("MATCH (f:File) RETURN f.id LIMIT 1") {
-                if res.by_ref().next().is_some() {
-                    needs_scan = false;
-                }
-            }
-
-            if needs_scan {
-                tracing::info!(
-                    "Auto-triggering deep scan recovery because .deep_scan_complete exists but DB is empty."
-                );
-                let _ = crate::indexer::scanner::scan_directory_native(
-                    &root_dir.to_string_lossy(),
-                    &db_path,
-                );
-            }
-            }
-        }
-    }
-
     let pid = std::process::id();
     let mut is_active_watcher = false;
     #[allow(unused_assignments)]
