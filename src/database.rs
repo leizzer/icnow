@@ -1,6 +1,8 @@
 use lbug::{Connection, Database, SystemConfig};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
+
+
 static DBS: OnceLock<Mutex<HashMap<String, std::sync::Arc<Database>>>> = OnceLock::new();
 pub fn resolve_centralized_db_path(original_db_path: &str) -> String {
     #[cfg(test)]
@@ -72,7 +74,9 @@ pub fn get_or_init_db(path: &str) -> Result<std::sync::Arc<Database>, String> {
         is_fresh = true;
     }
 
-    let cfg = SystemConfig::default().buffer_pool_size(1024 * 1024 * 1024); // 1GB buffer pool
+    let cfg = SystemConfig::default()
+        .buffer_pool_size(1024 * 1024 * 1024)
+        .enable_multi_writes(true);
     let db_result = Database::new(&path_str, cfg.clone());
 
     let db = match db_result {
