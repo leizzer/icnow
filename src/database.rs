@@ -87,24 +87,7 @@ pub fn get_or_init_db(path: &str) -> Result<std::sync::Arc<Database>, String> {
             if err_msg.contains("Could not set lock on file")
                 || err_msg.contains("IO exception: Could not set lock")
             {
-                tracing::warn!(
-                    "DB is locked by another process. Falling back to read-only mode with retries..."
-                );
-                let ro_config = cfg.read_only(true);
-                let mut ro_res = Database::new(&path_str, ro_config.clone());
-                for _ in 0..3 {
-                    if let Err(ro_err) = &ro_res {
-                        let ro_err_lower = ro_err.to_string().to_lowercase();
-                        if ro_err_lower.contains("corrupt") || ro_err_lower.contains("checksum") {
-                            tracing::warn!("Read-only open hit WAL corruption, retrying...");
-                            std::thread::sleep(std::time::Duration::from_millis(150));
-                            ro_res = Database::new(&path_str, ro_config.clone());
-                            continue;
-                        }
-                    }
-                    break;
-                }
-                ro_res.map_err(|e2| format!("Failed to open DB in read-only mode: {e2}"))?
+                return Err("Database is currently locked by another icnow instance. Please check for duplicate MCP server registrations.".to_string());
             } else if err_msg_lower.contains("corrupt") || err_msg_lower.contains("checksum") {
                 tracing::warn!(
                     "Corrupted WAL file detected at {}. Wiping and reinitializing...",

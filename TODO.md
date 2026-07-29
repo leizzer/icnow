@@ -56,3 +56,9 @@ This document outlines the approved new tools and enhancements for the `icnow` c
 ### [x] 3. Go Type Aliases and Composites
 * **Description**: Capture `DEPENDS_ON` for type aliases and composited declarations (e.g., `type HandlerFunc func(...)`).
 * **Why**: This will capture explicit type composition dependencies beyond standard struct fields and function signatures.
+
+## 🏗️ Architectural Enhancements
+
+### [ ] 1. Refactor `icnow` to Support Multiple Agent Instances (Dual-Scope Registration Bug)
+* **Description**: Currently, `icnow` is an embedded database (LadybugDB) that runs locally inside each MCP `stdio` process spawned by an LLM client (Claude, Cursor, etc.). Since LadybugDB uses exclusive file locks, spawning multiple agents on the same project creates lock contention and drops connections in secondary instances.
+* **Refactor Plan**: Convert `icnow` into a single local background daemon that maintains the database lock and holds the graph in memory. The MCP components would simply act as lightweight `stdio` proxies that forward JSON-RPC requests to the daemon over UDS or TCP, allowing multiple independent agents and IDEs to query and mutate the graph simultaneously without lock contention or crashes.
