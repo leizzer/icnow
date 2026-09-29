@@ -957,14 +957,15 @@ pub fn parse_file(file_path: &str, conn: &lbug::Connection) -> Result<FileSummar
             "MATCH (s:{src_table} {{id: $src}}), (t:{tgt_table} {{id: $tgt}}) MERGE (s)-[:{rel_table}]->(t)"
         );
 
-        if !edge_preps.contains_key(&query) {
-            let prep = conn
-                .prepare(&query)
-                .map_err(|e| anyhow::anyhow!("Prepare Edge failed: {e}"))?;
-            edge_preps.insert(query.clone(), prep);
-        }
-
-        let prep = edge_preps.get_mut(&query).unwrap();
+        let prep = match edge_preps.entry(query.clone()) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let p = conn
+                    .prepare(&query)
+                    .map_err(|err| anyhow::anyhow!("Prepare Edge failed: {err}"))?;
+                e.insert(p)
+            }
+        };
         conn.execute(
             prep,
             vec![
@@ -1152,13 +1153,38 @@ pub fn parse_file_in_memory(
 mod tests {
     use super::*;
 
+    struct TestDbGuard {
+        db_path: String,
+        db: std::sync::Arc<lbug::Database>,
+    }
+
+    impl TestDbGuard {
+        fn new(name: &str) -> Self {
+            let _ = std::fs::remove_dir_all(name);
+            let _ = std::fs::remove_file(format!("{name}.wal"));
+            let db = crate::database::get_or_init_db(name).unwrap();
+            Self {
+                db_path: name.to_string(),
+                db,
+            }
+        }
+        
+        fn conn(&self) -> lbug::Connection {
+            lbug::Connection::new(self.db.as_ref()).unwrap()
+        }
+    }
+
+    impl Drop for TestDbGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.db_path);
+            let _ = std::fs::remove_file(format!("{}.wal", self.db_path));
+        }
+    }
+
     #[test]
     fn test_parse_twice() {
-        let db_path = "test_parse_twice.db";
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let db = crate::database::get_or_init_db(db_path).unwrap();
-        let graph = lbug::Connection::new(db.as_ref()).unwrap();
+        let guard = TestDbGuard::new("test_parse_twice.db");
+        let graph = guard.conn();
 
         let ruby_file =
             "/Users/cristian/Projects/dgapp_bkp/app/controllers/api/v2/webhooks_controller.rb";
@@ -1170,18 +1196,12 @@ mod tests {
         // Second parse: nodes already exist, properties will be updated
         let res2 = parse_file(ruby_file, &graph);
         assert!(res2.is_ok(), "Second parse failed: {:?}", res2.err());
-
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
     }
 
     #[test]
     fn test_parse_rust() {
-        let db_path = "test_parse_rust.db";
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let db = crate::database::get_or_init_db(db_path).unwrap();
-        let graph = lbug::Connection::new(db.as_ref()).unwrap();
+        let guard = TestDbGuard::new("test_parse_rust.db");
+        let graph = guard.conn();
 
         let rs_file = "test_data/rust_test.rs";
 
@@ -1197,18 +1217,12 @@ mod tests {
             !summary.standalone_functions.is_empty(),
             "Expected some functions in parser.rs"
         );
-
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
     }
 
     #[test]
     fn test_parse_user_rb() {
-        let db_path = "test_parse_user_rb.db";
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let db = crate::database::get_or_init_db(db_path).unwrap();
-        let graph = lbug::Connection::new(db.as_ref()).unwrap();
+        let guard = TestDbGuard::new("test_parse_user_rb.db");
+        let graph = guard.conn();
         let ruby_file = "/Users/cristian/Projects/dgapp_bkp/app/models/user.rb";
         let res = parse_file(ruby_file, &graph).unwrap();
         println!("Structures: {:?}", res.structures);
@@ -1219,17 +1233,12 @@ mod tests {
         } else {
             println!("No methods found for User class");
         }
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
     }
 
     #[test]
     fn test_parse_python() {
-        let db_path = "test_parse_python.db";
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let db = crate::database::get_or_init_db(db_path).unwrap();
-        let graph = lbug::Connection::new(db.as_ref()).unwrap();
+        let guard = TestDbGuard::new("test_parse_python.db");
+        let graph = guard.conn();
         let py_file = "test_data/python_test.py";
         let res = crate::indexer::parser::parse_file(py_file, &graph).unwrap();
         println!("Structures: {:?}", res.structures);
@@ -1238,17 +1247,12 @@ mod tests {
         if let Some(methods) = res.methods.get("User") {
             println!("User Methods ({}): {:?}", methods.len(), methods);
         }
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
     }
 
     #[test]
     fn test_parse_go() {
-        let db_path = "test_parse_go.db";
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let db = crate::database::get_or_init_db(db_path).unwrap();
-        let graph = lbug::Connection::new(db.as_ref()).unwrap();
+        let guard = TestDbGuard::new("test_parse_go.db");
+        let graph = guard.conn();
         let go_file = "test_data/go_test.go";
         let res = crate::indexer::parser::parse_file(go_file, &graph).unwrap();
         println!("Structures: {:?}", res.structures);
@@ -1257,17 +1261,12 @@ mod tests {
         if let Some(methods) = res.methods.get("User") {
             println!("User Methods ({}): {:?}", methods.len(), methods);
         }
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
     }
 
     #[test]
     fn test_parse_ruby() {
-        let db_path = "test_parse_ruby.db";
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let db = crate::database::get_or_init_db(db_path).unwrap();
-        let graph = lbug::Connection::new(db.as_ref()).unwrap();
+        let guard = TestDbGuard::new("test_parse_ruby.db");
+        let graph = guard.conn();
         let rb_file = "test_data/ruby_test.rb";
         let res = crate::indexer::parser::parse_file(rb_file, &graph).unwrap();
         println!("Structures: {:?}", res.structures);
@@ -1276,23 +1275,16 @@ mod tests {
         if let Some(methods) = res.methods.get("User") {
             println!("User Methods ({}): {:?}", methods.len(), methods);
         }
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
     }
 
     #[test]
     fn test_parse_react() {
-        let db_path = "test_parse_react.db";
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
-        let db = crate::database::get_or_init_db(db_path).unwrap();
-        let graph = lbug::Connection::new(db.as_ref()).unwrap();
+        let guard = TestDbGuard::new("test_parse_react.db");
+        let graph = guard.conn();
         let tsx_file = "test_data/react_test.tsx";
         let res = crate::indexer::parser::parse_file(tsx_file, &graph).unwrap();
         println!("Structures: {:?}", res.structures);
         println!("Standalone: {:?}", res.standalone_functions);
         println!("Methods found keys: {:?}", res.methods.keys());
-        let _ = std::fs::remove_dir_all(db_path);
-        let _ = std::fs::remove_file(format!("{db_path}.wal"));
     }
 }

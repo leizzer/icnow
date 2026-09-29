@@ -52,8 +52,10 @@ struct LsifMoniker {
     kind: String,
 }
 
-pub fn auto_generate_lsif(project_root: &str) -> Result<String> {
+pub fn auto_generate_lsif(project_root: &str) -> Result<(String, Vec<String>)> {
     let root = Path::new(project_root);
+    let mut warnings = Vec::new();
+    let mut lsif_paths = Vec::new();
 
     // 1. Detect Rust
     if root.join("Cargo.toml").exists() {
@@ -64,80 +66,119 @@ pub fn auto_generate_lsif(project_root: &str) -> Result<String> {
             .current_dir(project_root)
             .output();
 
-        let output = match output {
-            Ok(o) => o,
-            Err(_) => {
-                return Err(anyhow::anyhow!(
-                    "rust-analyzer is not installed or not in PATH. Please install it by running:\n\
-                     rustup component add rust-analyzer"
-                ));
+        match output {
+            Ok(o) if o.status.success() => {
+                let temp_file_path = std::env::temp_dir().join("icnow_rust_lsif.lsif");
+                if let Ok(_) = std::fs::write(&temp_file_path, o.stdout) {
+                    lsif_paths.push(temp_file_path.to_string_lossy().to_string());
+                } else {
+                    warnings.push("Failed to write rust-analyzer LSIF output.".to_string());
+                }
             }
-        };
-
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("rust-analyzer lsif failed: {err}"));
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                warnings.push(format!("rust-analyzer lsif failed: {err}. Falling back to native parsing."));
+            }
+            Err(_) => {
+                warnings.push("rust-analyzer is not installed or not in PATH. Falling back to native parsing.".to_string());
+            }
         }
-
-        let temp_file_path = std::env::temp_dir().join("icnow_rust_lsif.lsif");
-        std::fs::write(&temp_file_path, output.stdout)?;
-        return Ok(temp_file_path.to_string_lossy().to_string());
     }
-
-    let mut lsif_path = "NATIVE_AST".to_string();
 
     // 2. Detect Ruby
     if root.join("Gemfile").exists() || root.join("Rakefile").exists() {
-        tracing::info!("Detected Ruby project. Running `solargraph lsif`...");
-        let output = std::process::Command::new("solargraph")
-            .arg("lsif")
-            .arg(project_root)
+        tracing::info!("Detected Ruby project. Running `scip-ruby`...");
+        let output = std::process::Command::new("bundle")
+            .arg("exec")
+            .arg("scip-ruby")
             .current_dir(project_root)
-            .output();
+            .output()
+            .or_else(|_| std::process::Command::new("scip-ruby").current_dir(project_root).output());
 
-        let output = match output {
-            Ok(o) => o,
-            Err(_) => {
-                return Err(anyhow::anyhow!(
-                    "solargraph is not installed or not in PATH. Please install it by running:\n\
-                     gem install solargraph"
-                ));
+        match output {
+            Ok(o) if o.status.success() => {
+                let scip_convert = std::process::Command::new("scip")
+                    .arg("convert")
+                    .arg("--from")
+                    .arg(root.join("index.scip").to_string_lossy().to_string())
+                    .arg("--to")
+                    .arg(root.join("dump.lsif").to_string_lossy().to_string())
+                    .current_dir(project_root)
+                    .output();
+                match scip_convert {
+                    Ok(co) if co.status.success() => {
+                        lsif_paths.push(root.join("dump.lsif").to_string_lossy().to_string());
+                    }
+                    Ok(co) => {
+                        let err = String::from_utf8_lossy(&co.stderr);
+                        warnings.push(format!("scip convert failed: {err}. Falling back to native Ruby AST parsing."));
+                    }
+                    Err(_) => {
+                        warnings.push("scip CLI is not installed (needed to convert index.scip). Falling back to native Ruby AST parsing.".to_string());
+                    }
+                }
             }
-        };
-
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("solargraph lsif failed: {err}"));
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                warnings.push(format!("scip-ruby failed: {err}. Falling back to native Ruby AST parsing."));
+            }
+            Err(_) => {
+                warnings.push("scip-ruby is not installed or not in PATH. Falling back to native Ruby AST parsing.".to_string());
+            }
         }
-
-        let temp_file_path = std::env::temp_dir().join("icnow_ruby_lsif.lsif");
-        std::fs::write(&temp_file_path, output.stdout)?;
-        lsif_path = temp_file_path.to_string_lossy().to_string();
     }
 
     // 3. Detect TypeScript/React
     if root.join("tsconfig.json").exists() || root.join("package.json").exists() {
-        tracing::info!(
-            "Detected TypeScript/JS/React project. Native TS AST parsing will also be executed."
-        );
-        if lsif_path != "NATIVE_AST" {
-            lsif_path = format!("{lsif_path},NATIVE_AST");
-        } else {
-            lsif_path = "NATIVE_AST".to_string();
+        tracing::info!("Detected TypeScript/JS project. Running `scip-typescript index`...");
+        let output = std::process::Command::new("npx")
+            .arg("scip-typescript")
+            .arg("index")
+            .current_dir(project_root)
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                let scip_convert = std::process::Command::new("scip")
+                    .arg("convert")
+                    .arg("--from")
+                    .arg(root.join("index.scip").to_string_lossy().to_string())
+                    .arg("--to")
+                    .arg(root.join("dump.lsif").to_string_lossy().to_string())
+                    .current_dir(project_root)
+                    .output();
+                match scip_convert {
+                    Ok(co) if co.status.success() => {
+                        lsif_paths.push(root.join("dump.lsif").to_string_lossy().to_string());
+                    }
+                    Ok(co) => {
+                        let err = String::from_utf8_lossy(&co.stderr);
+                        warnings.push(format!("scip convert failed for TS: {err}. Falling back to native TS AST parsing."));
+                    }
+                    Err(_) => {
+                        warnings.push("scip CLI is not installed (needed for TS). Falling back to native TS AST parsing.".to_string());
+                    }
+                }
+            }
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                warnings.push(format!("scip-typescript index failed: {err}. Falling back to native TS AST parsing."));
+            }
+            Err(_) => {
+                warnings.push("scip-typescript could not be executed via npx. Falling back to native TS AST parsing.".to_string());
+            }
         }
+        
+        // Ensure NATIVE_AST is appended for JS/TS since SCIP might miss dynamic features
+        lsif_paths.push("NATIVE_AST".to_string());
     }
 
-    if lsif_path == "NATIVE_AST"
-        && !root.join("tsconfig.json").exists()
-        && !root.join("package.json").exists()
-    {
-        return Err(anyhow::anyhow!(
-            "No supported project files (Cargo.toml, tsconfig.json, Gemfile) detected in {project_root}.\n\
-             Please generate the LSIF dump file manually and pass its path using `lsif_path`."
-        ));
+    if lsif_paths.is_empty() {
+        lsif_paths.push("NATIVE_AST".to_string());
     }
 
-    Ok(lsif_path)
+    let final_lsif_path = lsif_paths.join(",");
+    Ok((final_lsif_path, warnings))
 }
 
 #[derive(Default)]
@@ -687,15 +728,24 @@ struct ImportState {
     total_files: Option<usize>,
 }
 
-pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize, usize)> {
-    crate::IS_INDEXING.store(true, std::sync::atomic::Ordering::SeqCst);
-    use walkdir::WalkDir;
-    let db = crate::database::get_or_init_db(db_path).map_err(|e| anyhow::anyhow!(e.to_string())); let conn_res = match &db { Ok(d) => lbug::Connection::new(d.as_ref()).map_err(|e| anyhow::anyhow!(e.to_string())), Err(e) => Err(anyhow::anyhow!(e.to_string())) };
-    if let Err(e) = conn_res {
-        crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
-        return Err(e);
+struct IndexingGuard;
+impl IndexingGuard {
+    fn new() -> Self {
+        crate::IS_INDEXING.store(true, std::sync::atomic::Ordering::SeqCst);
+        Self
     }
-    let conn = conn_res.unwrap();
+}
+impl Drop for IndexingGuard {
+    fn drop(&mut self) {
+        crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+pub fn scan_directory_native(project_root: &str, db_path: &str) -> Result<(usize, usize)> {
+    let _guard = IndexingGuard::new();
+    use walkdir::WalkDir;
+    let db = crate::database::get_or_init_db(db_path).map_err(|e| anyhow::anyhow!(e))?;
+    let conn = lbug::Connection::new(db.as_ref()).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     let state_file = std::path::Path::new(db_path)
         .parent()
@@ -780,15 +830,10 @@ pub fn parse_and_import_lsif(
     db_path: &str,
     project_root: Option<&str>,
 ) -> Result<(usize, usize)> {
-    crate::IS_INDEXING.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _guard = IndexingGuard::new();
     tracing::info!("Starting LSIF import from {} into {}", lsif_path, db_path);
 
-    let file_res = File::open(lsif_path);
-    if let Err(e) = file_res {
-        crate::IS_INDEXING.store(false, std::sync::atomic::Ordering::SeqCst);
-        return Err(e.into());
-    }
-    let file = file_res.unwrap();
+    let file = File::open(lsif_path)?;
     let reader = BufReader::new(file);
 
     let mut ctx = LsifContext::default();

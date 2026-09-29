@@ -105,6 +105,9 @@ impl Service<RoleServer> for ResourceHandler {
                             resources,
                             meta: None,
                             next_cursor: None,
+                            cache_scope: None,
+                            result_type: None,
+                            ttl_ms: None,
                         }))
                     }
                     Err(e) => Err(ErrorData {

@@ -105,7 +105,7 @@ pub fn get_or_init_db(path: &str) -> Result<std::sync::Arc<Database>, String> {
         }
     };
     let arc_db = std::sync::Arc::new(db);
-    let conn = Connection::new(arc_db.as_ref()).unwrap();
+    let conn = Connection::new(arc_db.as_ref()).map_err(|e| format!("Failed to create connection: {}", e))?;
     tracing::info!("Calling init_schema");
     init_schema(&conn)?;
 

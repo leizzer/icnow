@@ -75,7 +75,7 @@ pub fn ensure_watching(project_root: &Path, db_path: &str) {
     };
 
     {
-        let mut watched = WATCHED_WORKSPACES.lock().unwrap();
+        let mut watched = WATCHED_WORKSPACES.lock().unwrap_or_else(|e| e.into_inner());
         if !watched.insert(canonical_path.clone()) {
             return;
         }

@@ -18,10 +18,10 @@ pub static IS_INDEXING: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 use fastembed::TextEmbedding;
 use std::sync::{Mutex, OnceLock};
 
-pub static EMBEDDING_MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
+pub static EMBEDDING_MODEL: OnceLock<Result<Mutex<TextEmbedding>, String>> = OnceLock::new();
 
-pub fn get_embedding_model() -> &'static Mutex<TextEmbedding> {
-    EMBEDDING_MODEL.get_or_init(|| {
+pub fn get_embedding_model() -> Result<&'static Mutex<TextEmbedding>, String> {
+    let res = EMBEDDING_MODEL.get_or_init(|| {
         tracing::info!("Initializing fastembed model (downloads if not present)...");
         let mut cache_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
         cache_dir.push(".icnow");
@@ -30,6 +30,14 @@ pub fn get_embedding_model() -> &'static Mutex<TextEmbedding> {
         let options = fastembed::InitOptions::new(fastembed::EmbeddingModel::AllMiniLML6V2)
             .with_show_download_progress(true)
             .with_cache_dir(cache_dir);
-        Mutex::new(TextEmbedding::try_new(options).expect("Failed to initialize embedding model"))
-    })
+        
+        TextEmbedding::try_new(options)
+            .map(Mutex::new)
+            .map_err(|e| format!("Failed to initialize embedding model: {}", e))
+    });
+
+    match res {
+        Ok(m) => Ok(m),
+        Err(e) => Err(e.clone()),
+    }
 }

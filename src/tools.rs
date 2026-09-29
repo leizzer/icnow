@@ -57,6 +57,29 @@ impl GraphService {
             self.db_path.clone()
         }
     }
+
+    pub(crate) async fn run_with_db<F, R>(
+        &self,
+        project_root: Option<String>,
+        file_path: Option<String>,
+        node_id: Option<String>,
+        f: F,
+    ) -> Result<R, String>
+    where
+        F: FnOnce(String) -> Result<R, String> + Send + 'static,
+        R: Send + 'static,
+    {
+        let service = self.clone();
+        blocking(move || {
+            let db_path = service.resolve_db_path_and_watch(
+                project_root.as_deref(),
+                file_path.as_deref(),
+                node_id.as_deref(),
+            );
+            f(db_path)
+        })
+        .await
+    }
 }
 
 /// Helper to run a blocking closure on the spawn_blocking pool and flatten the JoinError.
@@ -79,13 +102,12 @@ impl GraphService {
         &self,
         Parameters(req): Parameters<SaveNodeRequest>,
     ) -> Result<String, String> {
-        let svc = self.clone();
-        blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(
-                Some(req.project_root.as_str()),
-                Some(&req.node.id),
+        self.run_with_db(
+                Some(req.project_root.clone()),
+                Some(req.node.id.clone()),
                 None,
-            );
+            
+            move |db_path| {
             let db = crate::database::get_or_init_db(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
             let graph = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
 
@@ -103,13 +125,12 @@ impl GraphService {
         &self,
         Parameters(req): Parameters<SaveEdgeRequest>,
     ) -> Result<String, String> {
-        let svc = self.clone();
-        blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(
-                Some(req.project_root.as_str()),
-                Some(&req.edge.source),
+        self.run_with_db(
+                Some(req.project_root.clone()),
+                Some(req.edge.source.clone()),
                 None,
-            );
+            
+            move |db_path| {
              
             let db = crate::database::get_or_init_db(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
             let graph = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
@@ -129,13 +150,12 @@ impl GraphService {
         &self,
         Parameters(req): Parameters<ParseFileRequest>,
     ) -> Result<String, String> {
-        let svc = self.clone();
-        blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(
-                Some(req.project_root.as_str()),
-                Some(&req.file_path),
+        self.run_with_db(
+                Some(req.project_root.clone()),
+                Some(req.file_path.clone()),
                 None,
-            );
+            
+            move |db_path| {
              
             let db = crate::database::get_or_init_db(&db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
             let graph = lbug::Connection::new(db.as_ref()).map_err(|e| format!("Failed to create connection: {e}"))?;
@@ -208,13 +228,12 @@ impl GraphService {
         &self,
         Parameters(req): Parameters<TraverseGraphRequest>,
     ) -> Result<String, String> {
-        let svc = self.clone();
-        blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(
-                Some(req.project_root.as_str()),
+        self.run_with_db(
+                Some(req.project_root.clone()),
                 None,
-                Some(&req.node_id),
-            );
+                Some(req.node_id.clone()),
+            
+            move |db_path| {
             tracing::handle_traverse_graph(&db_path, req)
         })
         .await
@@ -261,13 +280,12 @@ Use this tool to instantly find where a symbol is defined across the entire work
         &self,
         Parameters(req): Parameters<GetDependenciesRequest>,
     ) -> Result<String, String> {
-        let svc = self.clone();
-        blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(
-                Some(req.project_root.as_str()),
+        self.run_with_db(
+                Some(req.project_root.clone()),
                 None,
-                Some(&req.node_id),
-            );
+                Some(req.node_id.clone()),
+            
+            move |db_path| {
             tracing::handle_get_dependencies(&db_path, req)
         })
         .await
@@ -282,13 +300,12 @@ Use this tool instead of `parse_project_file` when you only need to see what sym
         &self,
         Parameters(req): Parameters<GetFileStructureRequest>,
     ) -> Result<String, String> {
-        let svc = self.clone();
-        blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(
-                Some(req.project_root.as_str()),
-                Some(&req.file_path),
+        self.run_with_db(
+                Some(req.project_root.clone()),
+                Some(req.file_path.clone()),
                 None,
-            );
+            
+            move |db_path| {
             queries::handle_get_file_structure(&db_path, req)
         })
         .await
@@ -319,13 +336,12 @@ Use this BEFORE searching when you suspect files might be missing from the graph
         &self,
         Parameters(req): Parameters<CoverageCheckRequest>,
     ) -> Result<String, String> {
-        let svc = self.clone();
-        blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(
-                Some(req.project_root.as_str()),
-                Some(&req.directory_path),
+        self.run_with_db(
+                Some(req.project_root.clone()),
+                Some(req.directory_path.clone()),
                 None,
-            );
+            
+            move |db_path| {
             queries::handle_coverage_check(&db_path, req)
         })
         .await
@@ -363,13 +379,12 @@ Use this BEFORE searching when you suspect files might be missing from the graph
         &self,
         Parameters(req): Parameters<GetSymbolImplementationRequest>,
     ) -> Result<String, String> {
-        let svc = self.clone();
-        blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(
-                Some(req.project_root.as_str()),
+        self.run_with_db(
+                Some(req.project_root.clone()),
                 None,
-                Some(&req.node_id),
-            );
+                Some(req.node_id.clone()),
+            
+            move |db_path| {
             queries::handle_get_symbol_implementation(&db_path, req)
         })
         .await
@@ -384,13 +399,12 @@ Includes its basic properties (signature, docstring), the parent container it be
         &self,
         Parameters(req): Parameters<GetSymbolInfoRequest>,
     ) -> Result<String, String> {
-        let svc = self.clone();
-        blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(
-                Some(req.project_root.as_str()),
+        self.run_with_db(
+                Some(req.project_root.clone()),
                 None,
-                Some(&req.node_id),
-            );
+                Some(req.node_id.clone()),
+            
+            move |db_path| {
             queries::handle_get_symbol_info(&db_path, req)
         })
         .await
@@ -404,13 +418,12 @@ Includes its basic properties (signature, docstring), the parent container it be
         &self,
         Parameters(req): Parameters<TraceCallPathRequest>,
     ) -> Result<String, String> {
-        let svc = self.clone();
-        blocking(move || {
-            let db_path = svc.resolve_db_path_and_watch(
-                Some(req.project_root.as_str()),
+        self.run_with_db(
+                Some(req.project_root.clone()),
                 None,
-                Some(&req.start_node_id),
-            );
+                Some(req.start_node_id.clone()),
+            
+            move |db_path| {
             tracing::handle_trace_call_path(&db_path, req)
         })
         .await
@@ -481,7 +494,7 @@ This graph uses **LadybugDB** and is queried via **Cypher** using the `query_gra
             let actual_lsif_path = match lsif_path_opt {
                 Some(path) => path,
                 None => match crate::indexer::scanner::auto_generate_lsif(&inferred_root_clone) {
-                    Ok(generated) => generated,
+                    Ok((generated, _)) => generated,
                     Err(e) => {
                         ::tracing::error!("Auto-generation of LSIF failed: {}", e);
                         return;

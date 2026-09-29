@@ -156,7 +156,7 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
     props.insert("keywords".to_string(), keywords_str.clone());
 
     let text_to_embed = format!("{} {} {}", req.name, req.description, keywords_str);
-    let model = crate::get_embedding_model();
+    let model = crate::get_embedding_model()?;
     let mut model_lock = model.lock().map_err(|e| format!("Embedding model lock poisoned: {}", e))?;
     let embeddings = model_lock
         .embed(vec![text_to_embed], None)
@@ -212,7 +212,8 @@ pub fn handle_save_memory(db_path: &str, req: SaveMemoryRequest) -> Result<Strin
 }
 
 pub fn backup_all_memories(conn: &lbug::Connection, db_path: &str) {
-    let backup_path = std::path::Path::new(db_path)
+    let remapped_db_path = crate::database::resolve_centralized_db_path(db_path);
+    let backup_path = std::path::Path::new(&remapped_db_path)
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .join("memories_backup.json");
@@ -260,7 +261,8 @@ pub fn backup_all_memories(conn: &lbug::Connection, db_path: &str) {
 }
 
 pub fn restore_all_memories(conn: &lbug::Connection, db_path: &str) {
-    let backup_path = std::path::Path::new(db_path)
+    let remapped_db_path = crate::database::resolve_centralized_db_path(db_path);
+    let backup_path = std::path::Path::new(&remapped_db_path)
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .join("memories_backup.json");
@@ -381,7 +383,7 @@ pub fn handle_search_memories(db_path: &str, req: SearchMemoriesRequest) -> Resu
 
     let limit = 10;
 
-    let model = crate::get_embedding_model();
+    let model = crate::get_embedding_model()?;
     let mut model_lock = model.lock().map_err(|e| format!("Embedding model lock poisoned: {}", e))?;
     let query_embeddings = model_lock
         .embed(vec![req.query.clone()], None)
