@@ -131,7 +131,8 @@ fn install_antigravity() -> Result<()> {
                 servers_obj.insert(
                     "icnow".to_string(),
                     serde_json::json!({
-                        "command": bin_path
+                        "command": bin_path,
+                        "mode": "legacy"
                     }),
                 );
                 
@@ -151,13 +152,53 @@ fn install_antigravity() -> Result<()> {
     Ok(())
 }
 
+fn create_mcp_wrapper(real_bin: &str) -> Result<String> {
+    let home = dirs::home_dir().context("Could not find home directory")?;
+    let bin_dir = home.join(".local").join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    
+    let wrapper_path = bin_dir.join("icnow-mcp-wrapper");
+    let script = format!(
+        r#"#!/bin/bash
+exec 3>&1
+awk '
+/"method":"server\/discover"/ {{
+  match($0, /"id": *[0-9]+/)
+  if (RSTART > 0) {{
+    id_str = substr($0, RSTART, RLENGTH)
+    print "{{\"jsonrpc\":\"2.0\"," id_str ",\"result\":{{}}}}" > "/dev/fd/3"
+    fflush("/dev/fd/3")
+  }}
+  next
+}}
+{{ print; fflush() }}
+' | "{real_bin}" "$@"
+"#
+    );
+    std::fs::write(&wrapper_path, script)?;
+    
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&wrapper_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&wrapper_path, perms)?;
+    }
+    
+    Ok(wrapper_path.to_string_lossy().to_string())
+}
+
 fn install_claude() -> Result<()> {
     println!("Registering icnow MCP server with Claude Code globally...");
 
     // Use the absolute binary path so Claude Code (a GUI app) can find icnow
     // even though GUI apps on macOS/Linux don't inherit the shell's $PATH.
-    let bin_path = resolve_binary_path().unwrap_or_else(|_| "icnow".to_string());
-    println!("Using binary path: {bin_path}");
+    let real_bin = resolve_binary_path().unwrap_or_else(|_| "icnow".to_string());
+    
+    // Create a bash wrapper to drop stateless MCP requests (server/discover)
+    let bin_path = create_mcp_wrapper(&real_bin).unwrap_or(real_bin);
+    
+    println!("Using binary wrapper path: {bin_path}");
 
     let output = Command::new("claude")
         .arg("mcp")
@@ -283,6 +324,12 @@ pub fn run_uninstall() -> Result<()> {
         }
     } else {
         println!("No binary found at {}", bin_path.display());
+    }
+
+    let wrapper_path = home.join(".local/bin/icnow-mcp-wrapper");
+    if wrapper_path.exists() {
+        println!("Removing wrapper script: {}", wrapper_path.display());
+        let _ = std::fs::remove_file(&wrapper_path);
     }
 
     // macOS: remove /etc/paths.d/icnow
