@@ -44,6 +44,7 @@ impl GraphService {
         node_id: Option<&str>,
     ) -> String {
         let root = project_root
+            .filter(|r| !r.trim().is_empty())
             .map(|r| r.to_string())
             .or_else(|| file_path.and_then(infer_project_root))
             .or_else(|| node_id.and_then(infer_from_node_id));

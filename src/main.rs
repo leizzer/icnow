@@ -97,5 +97,5 @@ async fn main() -> Result<()> {
 
     tracing::info!("Server has shut down.");
 
-    Ok(())
+    std::process::exit(0);
 }
